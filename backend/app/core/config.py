@@ -98,6 +98,15 @@ class Settings(BaseSettings):
         if not origins or "*" in origins:
             errors.append("CORS_ORIGINS não pode ser '*' ou vazio em produção.")
 
+        if self.CREATE_TABLES_ON_STARTUP:
+            errors.append(
+                "CREATE_TABLES_ON_STARTUP deve ser false em produção — use Alembic migrations."
+            )
+
+        db_url = self.DATABASE_URL.strip().lower()
+        if db_url.startswith("sqlite"):
+            errors.append("DATABASE_URL não pode ser SQLite em produção — use PostgreSQL.")
+
         if errors:
             raise ValueError("Configuração insegura para produção:\n- " + "\n- ".join(errors))
         return self

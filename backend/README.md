@@ -34,6 +34,7 @@ scripts/      # export-openapi.py
 api-contract.d.ts
 ```
 
-Prefixo API: `/api/v1`. Probes: `/health`, `/ready`, `/live`.
+Prefixo API: `/api/v1`. Probes: `/health` (liveness-ish), `/ready` (`SELECT 1` no DB), `/live`.
+Docker HEALTHCHECK usa `/ready`.
 
 Contrato front: [FRONTEND_INTEGRATION.md](../FRONTEND_INTEGRATION.md).

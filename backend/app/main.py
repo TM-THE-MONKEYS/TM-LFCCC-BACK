@@ -14,6 +14,7 @@ from app.core.config import Settings, get_settings, resolve_upload_dir
 from app.core.logging import configure_logging, logger
 from app.exceptions.handlers import register_exception_handlers
 from app.middleware.correlation import CorrelationIdMiddleware
+from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 
 _PACKAGE_NAME = "vitrine-backend"
@@ -61,7 +62,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Middleware (último adicionado = primeiro a executar no request)
+    # Middleware (último adicionado = primeiro a executar no request).
+    # Correlation outer → logging sees correlation_id on the ContextVar.
+    application.add_middleware(RequestLoggingMiddleware)
     application.add_middleware(CorrelationIdMiddleware)
     application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(GZipMiddleware, minimum_size=500)
@@ -94,14 +97,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/ready", tags=["Observability"], operation_id="readiness_check")
     def readiness_check():
-        """Readiness probe — confirms the app is ready to serve traffic."""
+        """Readiness probe — confirms DB accepts a lightweight query."""
         from fastapi import HTTPException
+        from sqlalchemy import text
 
         from app.core.database import engine
 
         try:
-            with engine.connect():
-                pass
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
             return {"status": "ready", "timestamp": _now_iso()}
         except Exception:
             logger.exception("readiness_check_failed")

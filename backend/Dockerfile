@@ -52,8 +52,9 @@ EXPOSE 8000
 # gunicorn + UvicornWorker: production ASGI workers behind reverse proxy.
 # Migrations are NOT run here — use compose profile `migrate` (or a release job)
 # before scaling replicas to avoid multi-instance Alembic races.
+# /ready runs SELECT 1 against the DB — fail the container if Postgres is unreachable.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+    CMD curl -fsS http://127.0.0.1:8000/ready || exit 1
 
 CMD ["gunicorn", "app.main:app", \
      "-k", "uvicorn.workers.UvicornWorker", \

@@ -63,8 +63,8 @@ class UserResponse(CamelModel):
 
 class LoginRequest(CamelModel):
     # EmailStr-equivalent (format + normalize); special-use domains allowed for local/dev.
-    email: NormalizedEmail
-    password: str
+    email: NormalizedEmail = Field(examples=["admin@vitrine.local"])
+    password: str = Field(examples=["senha-segura-exemplo"])
 
     @field_validator("password")
     @classmethod

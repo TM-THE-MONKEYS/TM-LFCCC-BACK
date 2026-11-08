@@ -1,10 +1,10 @@
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
+from app.api.openapi_responses import OPENAPI_ERRORS
 from app.core.enums import ProductCategory, UserRole
 from app.models.user import User
 from app.schemas.common import ListResponse, PaginationMeta, StandardResponse
@@ -19,21 +19,13 @@ from app.services.product_service import ProductService
 
 router = APIRouter()
 
-_OPENAPI_ERRORS: dict[int | str, dict[str, Any]] = {
-    401: {"description": "Não autenticado"},
-    403: {"description": "Sem permissão"},
-    404: {"description": "Não encontrado"},
-    409: {"description": "Conflito"},
-    422: {"description": "Validação inválida"},
-}
-
 
 @router.get(
     "",
     response_model=ListResponse[ProductPublicResponse],
     summary="Listar produtos (catálogo público)",
     operation_id="list_products",
-    responses={422: _OPENAPI_ERRORS[422]},
+    responses={422: OPENAPI_ERRORS[422]},
 )
 def list_products(
     skip: int = Query(default=0, ge=0),
@@ -73,7 +65,7 @@ def list_products(
     response_model=StandardResponse[ProductResponse],
     summary="Detalhe admin com costPrice",
     operation_id="get_product_manage",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def get_product_manage(
     product_id: UUID,
@@ -92,7 +84,7 @@ def get_product_manage(
     response_model=StandardResponse[ProductPublicResponse],
     summary="Detalhe público do produto",
     operation_id="get_product",
-    responses={404: _OPENAPI_ERRORS[404], 422: _OPENAPI_ERRORS[422]},
+    responses={404: OPENAPI_ERRORS[404], 422: OPENAPI_ERRORS[422]},
 )
 def get_product(product_id: UUID, db: Session = Depends(get_db)):
     """Detalhe público — sem costPrice; inativos → 404."""
@@ -110,7 +102,7 @@ def get_product(product_id: UUID, db: Session = Depends(get_db)):
     status_code=status.HTTP_201_CREATED,
     summary="Criar produto",
     operation_id="create_product",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def create_product(
     data: ProductInput,
@@ -128,7 +120,7 @@ def create_product(
     response_model=StandardResponse[ProductResponse],
     summary="Atualizar produto (parcial; sem quantity)",
     operation_id="patch_product",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def patch_product(
     product_id: UUID,
@@ -148,10 +140,10 @@ def patch_product(
     summary="Soft-delete produto (isActive=false)",
     operation_id="delete_product",
     responses={
-        401: _OPENAPI_ERRORS[401],
-        403: _OPENAPI_ERRORS[403],
-        404: _OPENAPI_ERRORS[404],
-        422: _OPENAPI_ERRORS[422],
+        401: OPENAPI_ERRORS[401],
+        403: OPENAPI_ERRORS[403],
+        404: OPENAPI_ERRORS[404],
+        422: OPENAPI_ERRORS[422],
     },
 )
 def delete_product(
@@ -168,7 +160,7 @@ def delete_product(
     response_model=StandardResponse[ProductPublicResponse | ProductResponse],
     summary="Ajustar estoque (delta)",
     operation_id="patch_product_stock",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def patch_stock(
     product_id: UUID,
@@ -190,7 +182,7 @@ def patch_stock(
     response_model=StandardResponse[ProductResponse],
     summary="Upload de imagem do produto",
     operation_id="upload_product_image",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 async def upload_product_image(
     product_id: UUID,
