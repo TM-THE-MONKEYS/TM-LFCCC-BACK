@@ -1,19 +1,16 @@
-from typing import Optional
+from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-
 # get_db is defined once in database.py and re-exported here so routers and
 # tests always reference the exact same function object (required for
 # FastAPI dependency_overrides to work correctly).
 from app.core.database import get_db  # noqa: F401 — re-export
-
+from app.core.enums import UserRole
 from app.core.security import decode_access_token
 from app.models.user import User
-
 
 # ── Auth bearer scheme (auto_error=False so we can handle it ourselves) ───────
 
@@ -41,7 +38,7 @@ def _resolve_user(token: str, db: Session) -> User:
 
 
 def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
     """Strict auth dependency — raises 401 when token is missing or invalid."""
@@ -53,20 +50,16 @@ def get_current_user(
     return _resolve_user(credentials.credentials, db)
 
 
-def optional_auth(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-    db: Session = Depends(get_db),
-) -> Optional[User]:
-    """Auth dependency that respects AUTH_REQUIRED env.
+def require_role(*roles: UserRole | str) -> Callable[..., User]:
+    """Dependency factory that enforces the authenticated user has one of the roles."""
+    allowed = {r.value if isinstance(r, UserRole) else str(r) for r in roles}
 
-    - When AUTH_REQUIRED=true  → behaves like get_current_user (raises 401 if missing/invalid).
-    - When AUTH_REQUIRED=false → returns None if no token present; still validates when present.
-    """
-    if credentials is None:
-        if settings.AUTH_REQUIRED:
+    def _checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token de autenticação não fornecido.",
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permissão insuficiente para esta operação.",
             )
-        return None
-    return _resolve_user(credentials.credentials, db)
+        return current_user
+
+    return _checker

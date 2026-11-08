@@ -1,7 +1,9 @@
 # Guia de Integração Frontend ↔ Backend — Vitrine
 
-> **Para o agente de frontend:** Este documento descreve o contrato completo da API REST do backend Vitrine.
-> Use-o como fonte única de verdade para corrigir chamadas existentes e implementar integrações novas.
+> **Para o agente / engenheiro de frontend:** contrato da API REST após **Fase 5** (API redesign + errors/logging + app factory).
+> Tipos TypeScript espelhados em `backend/api-contract.d.ts` — mantenha os dois alinhados.
+>
+> **Breaking (Fase 5):** listas com `meta`; `PUT /products` → `PATCH`; soft-delete; `GET /reports` no envelope `StandardResponse`; IDs de path devem ser UUID (senão 422); stock do operator sem `costPrice`.
 
 ---
 
@@ -9,482 +11,346 @@
 
 ```
 Base URL local:    http://localhost:8000
-Prefixo da API:    /api/v1         (canônico)
-                   /api            (alias — ambos funcionam)
-Swagger UI:        http://localhost:8000/docs
+Prefixo da API:    /api/v1          ← único (alias /api REMOVIDO)
+Axios/fetch base:  http://localhost:8000/api/v1
+Swagger UI:        http://localhost:8000/docs  (desabilitado em production)
 ```
 
-Todo request com body deve ter `Content-Type: application/json`, exceto upload de imagem (`multipart/form-data`).
+- Todo body JSON: `Content-Type: application/json`
+- Upload de imagem: `multipart/form-data` (campo `file`)
+- Health probes ficam na **raiz** do host (não sob `/api/v1`): `/health`, `/ready`, `/live`
+- Respostas incluem header `X-Correlation-ID` (eco validado ou UUID gerado)
 
 ---
 
-## 2. Convenção de Campos — camelCase OBRIGATÓRIO
+## 2. camelCase obrigatório
 
-**O backend usa `alias_generator=to_camel` em todos os schemas.**
+O backend usa `alias_generator=to_camel` em todos os schemas de domínio.
 
-Isso significa:
-
-- Requests: enviar campos em **camelCase** (`productId`, `unitPrice`, `createdAt`)
-- Responses: receber campos em **camelCase**
-
-### ⚠️ Correções obrigatórias no frontend
-
-| Campo errado (snake_case) | Campo correto (camelCase) | Onde ocorre                      |
-| ------------------------- | ------------------------- | -------------------------------- |
-| `access_token`            | `accessToken`             | Response do `/auth/login`        |
-| `token_type`              | `tokenType`               | Response do `/auth/login`        |
-| `product_id`              | `productId`               | Body de venda, response de venda |
-| `product_name`            | `productName`             | Body e response de venda         |
-| `product_sku`             | `productSku`              | Body e response de venda         |
-| `unit_price`              | `unitPrice`               | Body e response de venda         |
-| `payment_method`          | `paymentMethod`           | Body e response de venda         |
-| `customer_name`           | `customerName`            | Body e response de venda         |
-| `promo_price`             | `promoPrice`              | Body e response de produto       |
-| `cost_price`              | `costPrice`               | Body e response de produto       |
-| `image_url`               | `imageUrl`                | Response de produto              |
-| `is_active`               | `isActive`                | Response de produto e usuário    |
-| `created_at`              | `createdAt`               | Todos os responses               |
-| `updated_at`              | `updatedAt`               | Response de produto              |
-| `donor_name`              | `donorName`               | Body e response de doação        |
-| `recipient_name`          | `recipientName`           | Body e response de doação        |
-| `product_type`            | `productType`             | Body e response de doação        |
-| `monetary_value`          | `monetaryValue`           | Body e response de doação        |
+| Errado (snake_case)   | Correto (camelCase)   | Onde                         |
+| --------------------- | --------------------- | ---------------------------- |
+| `access_token`        | `accessToken`         | Login                        |
+| `token_type`          | `tokenType`           | Login                        |
+| `product_id`          | `productId`           | Venda                        |
+| `cost_price`          | `costPrice`           | Produto (admin)              |
+| `unit_price_override` | `unitPriceOverride`   | Venda (só admin)             |
+| `promo_price`         | `promoPrice`          | Produto                      |
+| `payment_method`      | `paymentMethod`       | Venda / reports query        |
+| `cancelled_at`        | `cancelledAt`         | Venda                        |
+| `is_active`           | `isActive`            | Produto / filtros            |
 
 ---
 
-## 3. Formato de Datas
+## 3. Datas
 
-Todas as datas retornam como string ISO 8601 UTC com milissegundos:
+Strings ISO 8601 UTC com milissegundos:
 
 ```
 "2026-06-12T10:30:00.000Z"
 ```
 
-Ao exibir no frontend, fazer parse com `new Date(str)` ou `dayjs(str)`.
+Filtros `from` / `to` aceitam `YYYY-MM-DD` ou ISO 8601.  
+Relatórios agregam por **calendário local** (`APP_TIMEZONE`, default `America/Sao_Paulo`) — ver §6.4.
 
 ---
 
-## 4. Envelope de Listas
+## 4. Formato de resposta e erro
 
-Todos os endpoints de listagem retornam no formato:
+### 4.1 Envelope padrão
+
+**Recurso único** → `StandardResponse<T>`:
 
 ```json
-{ "data": [ ...itens... ] }
+{ "success": true, "message": "...", "data": { ... } }
 ```
 
-O frontend deve sempre acessar `.data` para obter o array.
+**Lista** → `ListResponse<T>` (agora com **meta**):
 
----
+```json
+{
+  "success": true,
+  "message": "...",
+  "data": [ ... ],
+  "meta": { "total": 42, "skip": 0, "limit": 100 }
+}
+```
 
-## 5. Erros
+No client HTTP tipado (Axios), o payload útil costuma ser `response.data.data`; paginação em `response.data.meta`.
 
-Todos os erros seguem o shape:
+### 4.2 Exceções ao envelope
+
+| Caso                         | Shape                                              |
+| ---------------------------- | -------------------------------------------------- |
+| `DELETE /products/{id}`      | **204** sem body (soft-delete)                     |
+| `DELETE /donations/{id}`     | **204** sem body                                   |
+| `/health`, `/ready`, `/live` | `{ status, timestamp }` (fora do envelope)         |
+
+> **Breaking:** `GET /api/v1/reports` agora vem em `StandardResponse<ReportResponse>` (`data.totalRevenue`, etc.).
+
+### 4.3 Erros (todos os 4xx / 5xx, inclusive rota inexistente)
 
 ```json
 {
   "status": 422,
-  "message": "Validation error",
-  "details": [
-    { "field": "price", "message": "Valor deve ser maior ou igual a zero" }
-  ],
+  "message": "Erro de validação dos dados enviados.",
+  "details": [{ "field": "price", "message": "..." }],
   "timestamp": "2026-06-12T10:30:00.000Z"
 }
 ```
 
-`details` é opcional (presente em erros de validação 422). Tratar sempre via `response.status` e `response.data.message`.
+- Sempre: `status`, `message`, `timestamp`
+- `details` costuma aparecer em **422** de validação; outros erros podem omitir `details`
+- **Não** há envelope `{ success, data }` em erro
+- Path ID inválido (não-UUID) → **422**
+- UUID válido inexistente → **404**
+
+Códigos: `401` · `403` · `404` · `409` (conflito/estoque/integridade) · `422` · `429` · `500` · `503` (ready)
 
 ---
 
-## 6. Autenticação JWT
+## 5. Autenticação JWT
 
-### Login
+### Decisões travadas
+
+- **Sem refresh token.** Só `accessToken` (JWT Bearer).
+- Expiração default: `JWT_EXPIRE_MINUTES=60`.
+- **Registro público removido.** Usuários via CLI ou `POST /users` (admin).
+
+### Login (público)
 
 ```
 POST /api/v1/auth/login
 Body: { "email": "...", "password": "..." }
 ```
 
-Response **200**:
+Response **200** (`StandardResponse<TokenResponse>`):
 
 ```json
 {
-  "accessToken": "eyJ...",
-  "tokenType": "bearer"
+  "success": true,
+  "message": "Login realizado com sucesso.",
+  "data": { "accessToken": "eyJ...", "tokenType": "bearer" }
 }
 ```
 
-> ⚠️ O campo é `accessToken` (camelCase), **não** `access_token`.
+### Rotas públicas (sem Bearer)
 
-### Armazenar e usar o token
+| Endpoint                         | Notas                                      |
+| -------------------------------- | ------------------------------------------ |
+| `GET /api/v1/products`           | Catálogo **sem** `costPrice`; só ativos    |
+| `GET /api/v1/products/{id}`      | Detalhe **sem** `costPrice`; inativo → 404 |
+| `POST /api/v1/auth/login`        | Login                                      |
+| `GET /health` `/ready` `/live`   | Probes                                     |
 
-```js
-// Salvar
-localStorage.setItem("token", data.accessToken); // ← accessToken, não access_token
+### Matriz de papéis
 
-// Enviar em requests autenticados
-headers: {
-  Authorization: `Bearer ${token}`;
-}
-```
+| Recurso / ação                              | Público | operator | admin |
+| ------------------------------------------- | :-----: | :------: | :---: |
+| `GET /products`, `GET /products/{id}`       |    ✓    |    ✓*    |   ✓*  |
+| `GET /products/{id}/manage`                 |         |          |   ✓   |
+| `POST /products`, `PATCH /products/{id}`    |         |          |   ✓   |
+| `DELETE /products/{id}` (soft)              |         |          |   ✓   |
+| `POST /products/{id}/image`                 |         |          |   ✓   |
+| `PATCH /products/{id}/stock`                |         |    ✓†    |   ✓‡  |
+| `GET /sales`, `GET /sales/{id}`             |         |    ✓     |   ✓   |
+| `POST /sales`                               |         |    ✓     |   ✓   |
+| `POST /sales/{id}/cancel`                   |         |          |   ✓   |
+| `unitPriceOverride` em `POST /sales`        |         | ignorado | honrado |
+| CRUD `/donations` + `PATCH`                 |         |          |   ✓   |
+| `GET /reports`                              |         |          |   ✓   |
+| `GET /auth/me`                              |         |    ✓     |   ✓   |
+| `GET/POST /users`                           |         |          |   ✓   |
 
-### Endpoints que exigem autenticação (Bearer obrigatório)
-
-| Endpoint              | Motivo                  |
-| --------------------- | ----------------------- |
-| `GET /api/v1/auth/me` | Dados do usuário logado |
-
-### Endpoints com autenticação opcional
-
-Os demais endpoints (produtos, vendas, doações) aceitam token mas **não exigem** quando `AUTH_REQUIRED=false` (padrão em dev).
+\* Schema público (sem `costPrice`).  
+† Resposta `ProductPublicResponse` (sem `costPrice`).  
+‡ Resposta `ProductResponse` (com `costPrice`).
 
 ---
 
-## 7. Endpoints Completos
+## 6. Endpoints
 
-### 7.1 Produtos — `/api/v1/products`
+Paginação: `?skip=0&limit=100` (`limit` máx. 500) + `meta.total`.
 
-#### GET `/api/v1/products`
+### 6.1 Produtos — `/api/v1/products`
 
-Retorna todos os produtos.
+#### Schemas
 
-```json
-{ "data": [ ProductResponse ] }
-```
+| Schema                   | Quando                                                         | `costPrice` |
+| ------------------------ | -------------------------------------------------------------- | ----------- |
+| `ProductPublicResponse`  | `GET` list/detail público; stock do **operator**               | **ausente** |
+| `ProductResponse`        | `POST`, `PATCH`, `GET .../manage`, stock **admin**, image      | presente    |
+| `ProductInput`           | body de `POST` (admin) — quantity só na criação                | obrigatório |
+| `ProductPatchInput`      | body de `PATCH` (admin) — **sem** `quantity`                   | opcional    |
 
-#### GET `/api/v1/products/{id}`
+#### Filtros de listagem
 
-Retorna produto por ID. **404** se não encontrado.
+| Query      | Default | Notas                                              |
+| ---------- | ------- | -------------------------------------------------- |
+| `q`        | —       | Busca em nome / SKU / descrição                    |
+| `category` | —       | `ProductCategory`                                  |
+| `isActive` | `true`  | Só ativos; `false` = inativos; sem modo “todos”    |
+| `inStock`  | —       | `true` → quantity > 0; `false` → quantity ≤ 0      |
+| `sort`     | omitido → `-created_at` | `name`, `sku`, `price`, `quantity`, `created_at`, `updated_at`; prefixo `-` = desc; chave inválida cai no default |
 
-#### POST `/api/v1/products` → 201
+#### Operações
 
-```json
-{
-  "sku": "CAM-001",
-  "name": "Camiseta Básica",
-  "description": "Descrição opcional",
-  "category": "camiseta",
-  "sizes": ["P", "M", "G"],
-  "colors": ["branco", "preto"],
-  "price": 25.0,
-  "promoPrice": null,
-  "costPrice": 10.0,
-  "quantity": 10,
-  "imageUrl": null
-}
-```
+| Método | Rota              | Auth            | Response                                      |
+| ------ | ----------------- | --------------- | --------------------------------------------- |
+| GET    | `/`               | público         | `ListResponse<ProductPublic…>` + meta         |
+| GET    | `/{id}`           | público         | `StandardResponse<ProductPublic…>`            |
+| GET    | `/{id}/manage`    | admin           | `StandardResponse<ProductResponse>`           |
+| POST   | `/`               | admin           | `201` + `ProductResponse`                     |
+| PATCH  | `/{id}`           | admin           | `ProductResponse` (não altera estoque)        |
+| DELETE | `/{id}`           | admin           | `204` soft-delete (`isActive=false`)          |
+| PATCH  | `/{id}/stock`     | admin\|operator | admin→`ProductResponse`; op→`ProductPublic…`  |
+| POST   | `/{id}/image`     | admin           | `ProductResponse`                             |
 
-**409** se SKU já existe.
-
-#### PUT `/api/v1/products/{id}` → 200
-
-Mesmo body do POST. Substitui todos os campos.
-
-#### DELETE `/api/v1/products/{id}` → 204
-
-Sem body. **404** se não encontrado.
-
-#### PATCH `/api/v1/products/{id}/stock` → 200
+Stock:
 
 ```json
 { "delta": -1 }
 ```
 
-`delta` positivo = incrementa, negativo = decrementa. Estoque nunca vai abaixo de 0.
+> Estoque **somente** via venda, cancelamento de venda ou `PATCH /stock`. `ProductPatchInput` **não** tem `quantity`.
+> Soft-delete: catálogo público e `GET /{id}` ocultam inativos (404). Admin ainda lê via `GET /{id}/manage`. Reativar com `PATCH` `{ "isActive": true }`.
+> `isActive` na listagem: default `true` (só ativos). `isActive=false` lista inativos. Não há modo “todos” num único request.
 
-#### POST `/api/v1/products/{id}/image` → 200
+---
 
-`multipart/form-data`, campo `file`.
+### 6.2 Vendas — `/api/v1/sales`
 
-- Tipos aceitos: `image/jpeg`, `image/png`, `image/webp`
-- Tamanho máximo: 5 MB
-- Retorna `ProductResponse` com `imageUrl` preenchida.
+#### Filtros de listagem
 
-**ProductResponse:**
+| Query               | Default | Notas                                              |
+| ------------------- | ------- | -------------------------------------------------- |
+| `from` / `to`       | —       | `YYYY-MM-DD` ou ISO 8601 (`to` = fim do dia UTC)   |
+| `paymentMethod`     | —       | `PaymentMethod`                                    |
+| `productId`         | —       | UUID                                               |
+| `includeCancelled`  | `false` | `true` inclui vendas com `cancelledAt` preenchido  |
 
-```json
-{
-  "id": "uuid",
-  "sku": "CAM-001",
-  "name": "Camiseta Básica",
-  "description": "",
-  "category": "camiseta",
-  "sizes": ["P", "M"],
-  "colors": ["branco"],
-  "price": 25.0,
-  "promoPrice": null,
-  "costPrice": 10.0,
-  "quantity": 5,
-  "imageUrl": "/uploads/products/uuid.jpg",
-  "isActive": true,
-  "createdAt": "2026-06-12T10:00:00.000Z",
-  "updatedAt": "2026-06-12T10:00:00.000Z"
-}
+| Método | Rota            | Auth            | Envelope                                            |
+| ------ | --------------- | --------------- | --------------------------------------------------- |
+| GET    | `/`             | autenticado     | `ListResponse<SaleResponse>` + meta                 |
+| GET    | `/{id}`         | autenticado     | `StandardResponse<SaleResponse>`                    |
+| POST   | `/`             | admin\|operator | `201` + `StandardResponse<SaleResponse>`            |
+| POST   | `/{id}/cancel`  | admin           | `StandardResponse<SaleResponse>` — **restaura estoque** |
+
+`SaleResponse` inclui `cancelledAt` (`null` se ativa). Cancelar de novo → **409**.
+
+---
+
+### 6.3 Doações — `/api/v1/donations` — **admin only**
+
+#### Filtros de listagem
+
+| Query         | Default | Notas                                            |
+| ------------- | ------- | ------------------------------------------------ |
+| `direction`   | —       | `DonationDirection` (`recebida` \| `doada`)      |
+| `category`    | —       | `DonationCategory`                               |
+| `from` / `to` | —       | `YYYY-MM-DD` ou ISO 8601 (`to` = fim do dia UTC) |
+
+| Método | Rota    | Status / envelope                              |
+| ------ | ------- | ---------------------------------------------- |
+| GET    | `/`     | `ListResponse<DonationResponse>` + meta        |
+| GET    | `/{id}` | `StandardResponse<DonationResponse>`           |
+| POST   | `/`     | `201` + `StandardResponse<DonationResponse>`   |
+| PATCH  | `/{id}` | `StandardResponse<DonationResponse>` (parcial) |
+| DELETE | `/{id}` | `204` (hard delete)                            |
+
+---
+
+### 6.4 Relatórios — `/api/v1/reports` — **admin only**
+
+```
+GET /api/v1/reports?days=30&paymentMethods=pix,dinheiro&donationCategories=roupas,dinheiro
+```
+
+**Response (breaking):** `StandardResponse<ReportResponse>` — ler `response.data.data.*`.
+
+Vendas canceladas **não** entram nos totais.
+
+#### Campos de doação — recebida vs outgoing
+
+| Campo                              | Significado                                      |
+| ---------------------------------- | ------------------------------------------------ |
+| `totalDonationsMonetary`           | Soma monetária **recebida**                      |
+| `totalDonationsCount`              | Contagem **recebida**                            |
+| `totalDonationsOutgoingMonetary`   | Soma monetária **doada**                         |
+| `totalDonationsOutgoingCount`      | Contagem **doada**                               |
+| `totalCombined`                    | `totalRevenue + totalDonationsMonetary`          |
+
+Timezone: buckets diários / janela `days` usam `APP_TIMEZONE` (default **America/Sao_Paulo**).
+
+---
+
+### 6.5 Usuários — `/api/v1/users` — **admin only**
+
+| Método | Rota | Response                          |
+| ------ | ---- | --------------------------------- |
+| GET    | `/`  | `ListResponse<UserResponse>` + meta |
+| POST   | `/`  | `201` + `StandardResponse<User…>` |
+
+---
+
+## 7. Enums
+
+```
+UserRole:          "admin" | "operator"
+PaymentMethod:     "dinheiro" | "cartao_credito" | "cartao_debito" | "pix" | "boleto"
+DonationDirection: "recebida" | "doada"
+DonationCategory:  "dinheiro" | "roupas" | "calcados" | "acessorios" | "alimentos" | "outros"
+ProductCategory:   "camiseta" | "calca" | "vestido" | "saia" | "jaqueta" | "calcado" | "acessorio" | "outro"
+ClothingSize:      "PP"|"P"|"M"|"G"|"GG"|"XGG"|"36"|"38"|"40"|"42"|"44"|"46"|"48"
 ```
 
 ---
 
-### 7.2 Vendas — `/api/v1/sales`
+## 8. CORS / HTTP / Observabilidade
 
-#### GET `/api/v1/sales`
-
-Retorna vendas ordenadas por `createdAt` decrescente.
-
-```json
-{ "data": [ SaleResponse ] }
-```
-
-#### POST `/api/v1/sales` → 201
-
-```json
-{
-  "productId": "uuid-do-produto",
-  "productName": "Camiseta Básica",
-  "productSku": "CAM-001",
-  "quantity": 2,
-  "unitPrice": 25.0,
-  "discount": 10,
-  "total": 45.0,
-  "customerName": "João Silva",
-  "paymentMethod": "pix",
-  "size": "M",
-  "color": "branco",
-  "notes": ""
-}
-```
-
-> ⚠️ O campo `total` enviado pelo frontend é **ignorado** — o backend recalcula:
-> `total = round(unitPrice * quantity * (1 - discount/100), 2)`
-
-**Erros possíveis:**
-
-- **404** — produto não encontrado
-- **409** — estoque insuficiente (`quantity` > `product.quantity`)
-
-**SaleResponse:**
-
-```json
-{
-  "id": "uuid",
-  "productId": "uuid",
-  "productName": "Camiseta Básica",
-  "productSku": "CAM-001",
-  "quantity": 2,
-  "unitPrice": 25.0,
-  "discount": 10.0,
-  "total": 45.0,
-  "customerName": "João Silva",
-  "paymentMethod": "pix",
-  "size": "M",
-  "color": "branco",
-  "notes": "",
-  "createdAt": "2026-06-12T10:00:00.000Z"
-}
-```
+- `allow_credentials=False`
+- Origens via `CORS_ORIGINS` (CSV)
+- `X-Correlation-ID` validado (charset + length); inválido → UUID novo
+- Logs estruturados com `correlation_id`; `/ready` loga exceção antes do 503
+- `ENVIRONMENT=production`: TrustedHost; docs/redoc/openapi off
 
 ---
 
-### 7.3 Doações — `/api/v1/donations`
+## 9. Dinheiro
 
-#### GET `/api/v1/donations`
+- Campos monetários são **`number` no JSON**, 2 casas (`ROUND_HALF_UP`).
+- `promoPrice` ≤ `price` (senão 422).
+- Doação `category: "dinheiro"` exige `monetaryValue > 0`.
+- `PATCH .../stock` com `delta: 0` → 422.
+- SKU normalizado para **UPPERCASE** no create/patch.
 
-Retorna doações ordenadas por `createdAt` decrescente.
+## 10. Frontend migration checklist (Fase 5 → Next app)
 
-```json
-{ "data": [ DonationResponse ] }
-```
+Para o futuro app Next: alinhar client tipado e telas com o contrato abaixo (fonte: este guia + `backend/api-contract.d.ts`).
 
-#### POST `/api/v1/donations` → 201
+### Tipos e HTTP client
+- [ ] Copiar/atualizar `backend/api-contract.d.ts` (ex.: `src/types/api.d.ts`)
+- [ ] Tipar listas como `ListResponse<T>` com `meta: { total, skip, limit }` — paginação UI lê `meta`, não `data.length`
+- [ ] Tipar recurso único / reports / cancel como `StandardResponse<T>` — payload em `.data`
+- [ ] Erros: parsear `ErrorResponse` (`status`, `message`, `timestamp`, `details?`) — **sem** `{ success, data }`
+- [ ] Path params: só UUID; inválido → **422**; inexistente → **404**
 
-```json
-{
-  "direction": "recebida",
-  "donorName": "Maria",
-  "recipientName": null,
-  "description": "Roupas de inverno",
-  "category": "roupas",
-  "productType": "casacos",
-  "monetaryValue": 0.0,
-  "notes": ""
-}
-```
+### Produtos
+- [ ] Remover qualquer `PUT /products/{id}` → usar `PATCH` com `ProductPatchInput` (**sem** `quantity`)
+- [ ] Estoque só via `PATCH /products/{id}/stock` `{ delta }` (≠ 0) ou fluxo de venda/cancel
+- [ ] Catálogo público: `ProductPublicResponse` (sem `costPrice`); soft-delete some da lista/`GET /{id}`
+- [ ] Admin detalhe/custo: `GET /products/{id}/manage` → `ProductResponse` (com `costPrice`)
+- [ ] Operator `PATCH .../stock`: tipar resposta como `ProductPublicResponse` (sem `costPrice`); admin como `ProductResponse`
+- [ ] Filtros: `q`, `category`, `isActive` (default true), `inStock`, `sort` (`name|sku|price|quantity|created_at|updated_at`, `-` = desc)
+- [ ] Soft-delete UI: `DELETE` → 204; reativar com `PATCH { isActive: true }`
 
-`direction` padrão: `"recebida"`. Valores: `"recebida"` | `"doada"`.
+### Vendas / doações / reports
+- [ ] Cancelamento: `POST /sales/{id}/cancel` (admin) — estoque restaurado; 2º cancel → 409; listar canceladas com `includeCancelled=true`
+- [ ] Filtros vendas: `from`, `to`, `paymentMethod`, `productId`, `includeCancelled`
+- [ ] Doações: `PATCH /donations/{id}` parcial; filtros `direction`, `category`, `from`, `to`
+- [ ] Reports: `GET /reports` → `StandardResponse<ReportResponse>` (ler `response.data.data.*`, não o body raiz)
+- [ ] Reports: vendas canceladas **não** entram nos totais
 
-#### DELETE `/api/v1/donations/{id}` → 204
-
-Sem body. **404** se não encontrado.
-
-**DonationResponse:**
-
-```json
-{
-  "id": "uuid",
-  "direction": "recebida",
-  "donorName": "Maria",
-  "recipientName": null,
-  "description": "Roupas de inverno",
-  "category": "roupas",
-  "productType": "casacos",
-  "monetaryValue": 0.0,
-  "notes": "",
-  "createdAt": "2026-06-12T10:00:00.000Z"
-}
-```
-
----
-
-### 7.4 Relatórios — `/api/v1/reports`
-
-#### GET `/api/v1/reports`
-
-Query params (todos opcionais):
-| Param | Tipo | Padrão | Descrição |
-|---|---|---|---|
-| `days` | int | 30 | Janela de dias (1-365) |
-| `paymentMethods` | string | null | CSV: `"pix,dinheiro"` |
-| `donationCategories` | string | null | CSV: `"roupas,dinheiro"` |
-
-**Response (não usa envelope `{ data }`):**
-
-```json
-{
-  "totalRevenue": 1500.0,
-  "totalSales": 42,
-  "averageTicket": 35.71,
-  "totalDonationsMonetary": 300.0,
-  "totalDonationsCount": 8,
-  "totalCombined": 1800.0,
-  "topProductsByRevenue": [
-    { "name": "Camiseta", "sku": "CAM-001", "revenue": 500.0, "units": 20 }
-  ],
-  "topProductsByUnits": [
-    { "name": "Camiseta", "sku": "CAM-001", "revenue": 500.0, "units": 20 }
-  ],
-  "salesByPaymentMethod": [
-    { "method": "pix", "count": 30, "revenue": 1000.0, "pct": 66.67 }
-  ],
-  "revenueByDay": [
-    { "date": "2026-06-12", "revenue": 200.0, "donations": 50.0, "count": 5 }
-  ]
-}
-```
-
-> `revenueByDay` contém **todos os dias** da janela, incluindo dias com `revenue: 0`.
-
----
-
-### 7.5 Autenticação — `/api/v1/auth`
-
-#### POST `/api/v1/auth/register` → 201
-
-```json
-{ "name": "Admin", "email": "admin@vitrine.local", "password": "changeme" }
-```
-
-**409** se email já cadastrado.
-
-Response: `UserResponse`
-
-#### POST `/api/v1/auth/login` → 200
-
-```json
-{ "email": "admin@vitrine.local", "password": "changeme" }
-```
-
-Response:
-
-```json
-{ "accessToken": "eyJ...", "tokenType": "bearer" }
-```
-
-#### GET `/api/v1/auth/me` → 200
-
-Header: `Authorization: Bearer <token>`
-
-Response: `UserResponse`
-
-```json
-{
-  "id": "uuid",
-  "name": "Admin",
-  "email": "admin@vitrine.local",
-  "isActive": true,
-  "createdAt": "2026-06-12T10:00:00.000Z"
-}
-```
-
----
-
-## 8. Enums Válidos
-
-### Categorias de Produto (`category`)
-
-```
-"camiseta" | "calca" | "vestido" | "saia" | "jaqueta" | "calcado" | "acessorio" | "outro"
-```
-
-### Método de Pagamento (`paymentMethod`)
-
-```
-"dinheiro" | "cartao_credito" | "cartao_debito" | "pix" | "boleto"
-```
-
-### Direção de Doação (`direction`)
-
-```
-"recebida" | "doada"
-```
-
-### Categoria de Doação (`category`)
-
-```
-"dinheiro" | "roupas" | "calcados"
-```
-
-### Tamanhos de Roupa (`sizes[]`)
-
-```
-"PP" | "P" | "M" | "G" | "GG" | "XGG" | "36" | "38" | "40" | "42" | "44" | "46" | "48"
-```
-
----
-
-## 9. CORS
-
-Origens liberadas por padrão:
-
-```
-http://localhost:5173   (Vite)
-http://localhost:3000
-http://localhost:8080
-```
-
-Para adicionar origens, alterar `CORS_ORIGINS` no `.env` do backend (CSV).
-
----
-
-## 10. Upload de Imagem
-
-A imagem fica acessível via URL relativa ao backend:
-
-```
-http://localhost:8000/uploads/products/<uuid>.jpg
-```
-
-O `imageUrl` retornado no `ProductResponse` já vem como path completo (`/uploads/products/...`).
-Para exibir: `http://localhost:8000${product.imageUrl}` (concatenar com a base URL em dev).
-
----
-
-## 11. Checklist de Integração
-
-- [ ] `axios` (ou equivalente) configurado com `baseURL = http://localhost:8000`
-- [ ] Interceptor de request adicionando `Authorization: Bearer <token>` quando logado
-- [ ] Interceptor de response tratando 401 (redirecionar para login) e 422 (mostrar `details`)
-- [ ] Substituir todos os campos snake_case por camelCase nas chamadas (seção 2)
-- [ ] Login: ler `data.accessToken` (não `data.access_token`)
-- [ ] Listas: acessar `response.data.data` (envelope `{ data: [] }`)
-- [ ] Relatórios: acessar `response.data` diretamente (sem envelope)
-- [ ] Datas: fazer parse com `new Date()` ou `dayjs()` antes de exibir
-- [ ] Upload de imagem: usar `FormData` com campo `file`
-- [ ] Imagens: prefixar `imageUrl` com a base URL do backend
+### Auth / misc
+- [ ] Base URL `/api/v1` (sem alias `/api`); Bearer JWT sem refresh
+- [ ] Headers: ecoar / logar `X-Correlation-ID` quando útil para suporte
+- [ ] Money: `number` com 2 casas; `promoPrice` ≤ `price`

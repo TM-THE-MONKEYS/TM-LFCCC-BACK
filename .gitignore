@@ -38,6 +38,9 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 
+# Generated OpenAPI (regenerate: python backend/scripts/export-openapi.py)
+backend/openapi.json
+
 # IDE
 .idea/
 .vscode/

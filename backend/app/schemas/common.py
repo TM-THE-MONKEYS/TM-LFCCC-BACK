@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
-from typing import Annotated, Generic, List, Optional, TypeVar
+from datetime import UTC, datetime
+from typing import Annotated, TypeVar
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 from pydantic.alias_generators import to_camel
 
 # Converte qualquer datetime → "2026-05-28T10:00:00.000Z" (ISO 8601, milissegundos, UTC Z)
@@ -9,10 +9,10 @@ DatetimeISO = Annotated[
     datetime,
     PlainSerializer(
         lambda dt: (
-            dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-        )
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z"),
+            (dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        ),
         return_type=str,
     ),
 ]
@@ -29,13 +29,20 @@ class CamelModel(BaseModel):
         alias_generator=to_camel,
         populate_by_name=True,
         from_attributes=True,
+        str_strip_whitespace=True,
     )
 
 
 T = TypeVar("T")
 
 
-class StandardResponse(BaseModel, Generic[T]):
+class PaginationMeta(CamelModel):
+    total: int = Field(ge=0)
+    skip: int = Field(ge=0)
+    limit: int = Field(ge=1)
+
+
+class StandardResponse[T](BaseModel):
     """Envelope de recurso único: { "success": true, "message": "...", "data": {...} }"""
 
     success: bool = True
@@ -43,12 +50,13 @@ class StandardResponse(BaseModel, Generic[T]):
     data: T
 
 
-class ListResponse(BaseModel, Generic[T]):
-    """Envelope de lista: { "success": true, "message": "...", "data": [...] }"""
+class ListResponse[T](BaseModel):
+    """Envelope de lista com meta de paginação."""
 
     success: bool = True
     message: str = "Listado com sucesso"
-    data: List[T]
+    data: list[T]
+    meta: PaginationMeta
 
 
 class ErrorDetail(BaseModel):
@@ -59,5 +67,5 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     status: int
     message: str
-    details: Optional[List[ErrorDetail]] = None
+    details: list[ErrorDetail] | None = None
     timestamp: str

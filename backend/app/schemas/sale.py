@@ -1,56 +1,40 @@
-from typing import Optional
+from decimal import Decimal
 
-from pydantic import field_validator
+from pydantic import Field
 
 from app.core.enums import PaymentMethod
+from app.core.money import MoneyDecimal
 from app.schemas.common import CamelModel, DatetimeISO
 
 
 class SaleInput(CamelModel):
-    product_id: str
-    quantity: int
-    unit_price: float
-    discount: float = 0.0
-    customer_name: Optional[str] = None
+    """Client sends product, quantity and payment data — unit price comes from the product."""
+
+    product_id: str = Field(min_length=1, max_length=36)
+    quantity: int = Field(gt=0)
+    discount: MoneyDecimal = Field(default=Decimal("0.00"), ge=Decimal("0"), le=Decimal("100"))
+    customer_name: str | None = Field(default=None, max_length=255)
     payment_method: PaymentMethod
-    size: Optional[str] = None
-    color: Optional[str] = None
-    notes: Optional[str] = None
-
-    @field_validator("quantity")
-    @classmethod
-    def quantity_positive(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("Quantidade deve ser maior que zero")
-        return v
-
-    @field_validator("unit_price")
-    @classmethod
-    def unit_price_non_negative(cls, v: float) -> float:
-        if v < 0:
-            raise ValueError("Preço unitário deve ser maior ou igual a zero")
-        return v
-
-    @field_validator("discount")
-    @classmethod
-    def discount_range(cls, v: float) -> float:
-        if not (0 <= v <= 100):
-            raise ValueError("Desconto deve estar entre 0 e 100")
-        return v
+    size: str | None = Field(default=None, max_length=20)
+    color: str | None = Field(default=None, max_length=100)
+    notes: str | None = Field(default=None, max_length=2000)
+    # Honored only when the authenticated user has role=admin; ignored for operator.
+    unit_price_override: MoneyDecimal | None = Field(default=None, ge=Decimal("0"))
 
 
 class SaleResponse(CamelModel):
     id: str
-    product_id: Optional[str] = None
+    product_id: str | None = None
     product_name: str
     product_sku: str
     quantity: int
-    unit_price: float
-    discount: float
-    total: float
-    customer_name: Optional[str] = None
+    unit_price: MoneyDecimal
+    discount: MoneyDecimal
+    total: MoneyDecimal
+    customer_name: str | None = None
     payment_method: PaymentMethod
-    size: Optional[str] = None
-    color: Optional[str] = None
-    notes: Optional[str] = None
+    size: str | None = None
+    color: str | None = None
+    notes: str | None = None
+    cancelled_at: DatetimeISO | None = None
     created_at: DatetimeISO

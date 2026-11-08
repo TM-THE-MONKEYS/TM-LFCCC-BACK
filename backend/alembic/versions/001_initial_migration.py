@@ -5,34 +5,53 @@ Revises:
 Create Date: 2026-06-12 00:00:00.000000
 
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
+
 revision: str = "001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     # ── Enum types ────────────────────────────────────────────────────────────
     product_category = postgresql.ENUM(
-        "camiseta", "calca", "vestido", "saia", "jaqueta", "calcado", "acessorio", "outro",
+        "camiseta",
+        "calca",
+        "vestido",
+        "saia",
+        "jaqueta",
+        "calcado",
+        "acessorio",
+        "outro",
         name="product_category",
     )
     payment_method = postgresql.ENUM(
-        "dinheiro", "cartao_credito", "cartao_debito", "pix", "boleto",
+        "dinheiro",
+        "cartao_credito",
+        "cartao_debito",
+        "pix",
+        "boleto",
         name="payment_method",
     )
     donation_direction = postgresql.ENUM(
-        "recebida", "doada",
+        "recebida",
+        "doada",
         name="donation_direction",
     )
     donation_category = postgresql.ENUM(
-        "dinheiro", "roupas", "calcados", "acessorios", "alimentos", "outros",
+        "dinheiro",
+        "roupas",
+        "calcados",
+        "acessorios",
+        "alimentos",
+        "outros",
         name="donation_category",
     )
 
@@ -69,7 +88,14 @@ def upgrade() -> None:
         sa.Column(
             "category",
             sa.Enum(
-                "camiseta", "calca", "vestido", "saia", "jaqueta", "calcado", "acessorio", "outro",
+                "camiseta",
+                "calca",
+                "vestido",
+                "saia",
+                "jaqueta",
+                "calcado",
+                "acessorio",
+                "outro",
                 name="product_category",
                 create_type=False,
             ),
@@ -128,7 +154,11 @@ def upgrade() -> None:
         sa.Column(
             "payment_method",
             sa.Enum(
-                "dinheiro", "cartao_credito", "cartao_debito", "pix", "boleto",
+                "dinheiro",
+                "cartao_credito",
+                "cartao_debito",
+                "pix",
+                "boleto",
                 name="payment_method",
                 create_type=False,
             ),
@@ -163,7 +193,12 @@ def upgrade() -> None:
         sa.Column(
             "category",
             sa.Enum(
-                "dinheiro", "roupas", "calcados", "acessorios", "alimentos", "outros",
+                "dinheiro",
+                "roupas",
+                "calcados",
+                "acessorios",
+                "alimentos",
+                "outros",
                 name="donation_category",
                 create_type=False,
             ),

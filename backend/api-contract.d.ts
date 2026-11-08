@@ -1,50 +1,80 @@
 /**
  * API Contract — Vitrine Backend
- * Gerado em: 2026-07-03
+ * Atualizado: Fase 5 — API redesign + errors/logging + app factory (2026-11-07)
  *
- * Copie este arquivo para o seu projeto frontend (ex: src/types/api.d.ts)
- * e use os tipos nas chamadas Axios/Fetch.
+ * Copie para o frontend (ex: src/types/api.d.ts) e use nas chamadas Axios/Fetch.
+ * Guia narrativo: FRONTEND_INTEGRATION.md (manter alinhado com este arquivo).
  *
  * Base URL: http://localhost:8000/api/v1
- * Nota: /api/* é um alias retrocompatível para /api/v1/*
+ *
+ * BREAKING (Fase 5):
+ * - ListResponse inclui meta { total, skip, limit }
+ * - PUT /products/{id} removido → PATCH parcial (sem quantity)
+ * - DELETE /products/{id} é soft-delete (isActive=false); catálogo oculta inativos
+ * - GET /products/{id}/manage (admin) → ProductResponse com costPrice
+ * - PATCH stock: operator → ProductPublicResponse; admin → ProductResponse
+ * - POST /sales/{id}/cancel (admin) restaura estoque
+ * - PATCH /donations/{id} parcial
+ * - GET /reports agora em StandardResponse<ReportResponse>
+ * - Path IDs devem ser UUID (inválido → 422; inexistente → 404)
+ *
+ * BREAKING (Fases anteriores): alias /api removido; register público removido; sem refresh.
+ * Dinheiro: number no JSON, 2 casas.
+ *
+ * Frontend migration: ver FRONTEND_INTEGRATION.md §10.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Envelopes de resposta
-// Todos os endpoints (exceto /reports) retornam um destes dois formatos.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Resposta de recurso único */
+export interface PaginationMeta {
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+/** Recurso único — GET/{id}, POST, PATCH */
 export interface StandardResponse<T> {
   success: boolean;
   message: string;
   data: T;
 }
 
-/** Resposta de lista */
+/** Lista — GET sem id (products, sales, donations, users) */
 export interface ListResponse<T> {
   success: boolean;
   message: string;
   data: T[];
+  meta: PaginationMeta;
 }
 
-/** Resposta de erro (todos os status 4xx e 5xx) */
+/**
+ * Erro (todos os 4xx e 5xx, inclusive rota inexistente).
+ * Sem envelope { success, data }.
+ */
 export interface ErrorResponse {
   status: number;
   message: string;
-  timestamp: string; // ISO 8601 ex: "2026-07-03T10:00:00.000Z"
-  details?: ErrorDetail[]; // presente apenas em erros 422
+  timestamp: string; // ISO 8601 UTC
+  details?: ErrorDetail[];
 }
 
-/** Detalhe de erro de validação de campo */
 export interface ErrorDetail {
   field: string;
   message: string;
 }
 
+export interface HealthProbeResponse {
+  status: string; // "healthy" | "ready" | "alive"
+  timestamp: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
 // ─────────────────────────────────────────────────────────────────────────────
+
+export type UserRole = "admin" | "operator";
 
 export type ProductCategory =
   | "camiseta"
@@ -55,6 +85,21 @@ export type ProductCategory =
   | "calcado"
   | "acessorio"
   | "outro";
+
+export type ClothingSize =
+  | "PP"
+  | "P"
+  | "M"
+  | "G"
+  | "GG"
+  | "XGG"
+  | "36"
+  | "38"
+  | "40"
+  | "42"
+  | "44"
+  | "46"
+  | "48";
 
 export type PaymentMethod =
   | "dinheiro"
@@ -73,64 +118,102 @@ export type DonationCategory =
   | "alimentos"
   | "outros";
 
+export interface ListQuery {
+  skip?: number;
+  limit?: number;
+}
+
+export interface ProductListQuery extends ListQuery {
+  q?: string;
+  category?: ProductCategory;
+  /** Default true (só ativos). false = inativos. Sem modo "todos". */
+  isActive?: boolean;
+  inStock?: boolean;
+  /** name|sku|price|quantity|created_at|updated_at; prefix "-" = desc. Omitido → -created_at. */
+  sort?: string;
+}
+
+export interface SaleListQuery extends ListQuery {
+  from?: string; // YYYY-MM-DD | ISO
+  to?: string; // YYYY-MM-DD = fim do dia UTC
+  paymentMethod?: PaymentMethod;
+  productId?: string; // UUID
+  includeCancelled?: boolean; // default false
+}
+
+export interface DonationListQuery extends ListQuery {
+  direction?: DonationDirection;
+  category?: DonationCategory;
+  from?: string; // YYYY-MM-DD | ISO
+  to?: string; // YYYY-MM-DD = fim do dia UTC
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — /api/v1/auth
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** POST /auth/register */
-export interface UserCreate {
-  name: string;
-  email: string;    // formato válido obrigatório
-  password: string; // mínimo 8 caracteres
-}
-
-/** POST /auth/login */
 export interface LoginRequest {
   email: string;
   password: string;
 }
 
-/** data dentro de StandardResponse<TokenResponse> */
 export interface TokenResponse {
-  accessToken: string; // use no header: Authorization: Bearer <accessToken>
-  tokenType: string;   // sempre "bearer"
+  accessToken: string;
+  tokenType: string; // "bearer"
 }
 
-/** data dentro de StandardResponse<UserResponse> */
 export interface UserResponse {
   id: string;
   name: string;
   email: string;
+  role: UserRole;
   isActive: boolean;
-  createdAt: string; // ISO 8601
+  createdAt: string;
 }
 
-// Exemplos de uso:
-//   POST /auth/register  → StandardResponse<UserResponse>   (201)
-//   POST /auth/login     → StandardResponse<TokenResponse>  (200)
-//   GET  /auth/me        → StandardResponse<UserResponse>   (200) — requer Bearer token
+export interface UserCreate {
+  name: string;
+  email: string;
+  password: string;
+  role?: UserRole; // default: operator
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Produtos — /api/v1/products
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** POST /products  e  PUT /products/{id} */
+/** POST /products — admin (quantity só na criação) */
 export interface ProductInput {
   sku: string;
   name: string;
   description?: string;
   category: ProductCategory;
-  sizes?: string[];
+  sizes?: ClothingSize[];
   colors?: string[];
-  price: number;             // >= 0
-  promoPrice?: number;       // >= 0, opcional
-  costPrice: number;         // >= 0
-  quantity?: number;         // >= 0, default 0
+  price: number;
+  promoPrice?: number;
+  costPrice: number;
+  quantity?: number;
   imageUrl?: string;
 }
 
-/** data dentro de StandardResponse<ProductResponse> ou ListResponse<ProductResponse> */
-export interface ProductResponse {
+/** PATCH /products/{id} — admin; NÃO inclui quantity */
+export interface ProductPatchInput {
+  sku?: string;
+  name?: string;
+  description?: string;
+  category?: ProductCategory;
+  sizes?: ClothingSize[];
+  colors?: string[];
+  price?: number;
+  promoPrice?: number;
+  costPrice?: number;
+  imageUrl?: string;
+  isActive?: boolean;
+}
+
+/** GET público — sem costPrice */
+export interface ProductPublicResponse {
   id: string;
   sku: string;
   name: string;
@@ -140,91 +223,98 @@ export interface ProductResponse {
   colors: string[];
   price: number;
   promoPrice: number | null;
-  costPrice: number;
   quantity: number;
   imageUrl: string | null;
   isActive: boolean;
-  createdAt: string; // ISO 8601
-  updatedAt: string; // ISO 8601
+  createdAt: string;
+  updatedAt: string;
 }
 
-/** PATCH /products/{id}/stock */
+/** Admin writes + GET /products/{id}/manage */
+export interface ProductResponse extends ProductPublicResponse {
+  costPrice: number;
+}
+
 export interface StockPatchInput {
-  delta: number; // positivo = aumenta, negativo = diminui (409 se < 0 resultante)
+  delta: number; // ≠ 0
 }
 
-// Exemplos de uso:
-//   GET    /products              → ListResponse<ProductResponse>    (200)
-//   GET    /products?skip=0&limit=100  → ListResponse<ProductResponse>
-//   GET    /products/{id}         → StandardResponse<ProductResponse> (200)
-//   POST   /products              → StandardResponse<ProductResponse> (201)
-//   PUT    /products/{id}         → StandardResponse<ProductResponse> (200)
-//   DELETE /products/{id}         → 204 No Content
-//   PATCH  /products/{id}/stock   → StandardResponse<ProductResponse> (200)
-//   POST   /products/{id}/image   → StandardResponse<ProductResponse> (200)
-//     └─ multipart/form-data, campo: "file", tipos: jpeg/png/webp, max: 5MB
+// Authz:
+//   GET    /products                 → público (+ meta); sem costPrice
+//   GET    /products/{id}            → público (ativo; inativo → 404); sem costPrice
+//   GET    /products/{id}/manage     → admin → ProductResponse (incl. inativos + costPrice)
+//   POST   /products                 → admin → 201 ProductResponse
+//   PATCH  /products/{id}            → admin (sem quantity); reativa com { isActive: true }
+//   DELETE /products/{id}            → admin → 204 soft-delete (isActive=false)
+//   PATCH  /products/{id}/stock      → admin → ProductResponse; operator → ProductPublicResponse
+//   POST   /products/{id}/image      → admin → ProductResponse
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vendas — /api/v1/sales
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** POST /sales */
 export interface SaleInput {
-  productId: string;         // ID do produto no banco
-  quantity: number;          // > 0
-  unitPrice: number;         // >= 0 — preço cobrado na venda
-  discount?: number;         // 0 a 100 (percentual), default 0
+  productId: string;
+  quantity: number;
+  discount?: number;
   customerName?: string;
   paymentMethod: PaymentMethod;
   size?: string;
   color?: string;
   notes?: string;
-  // NÃO enviar: productName, productSku, total — preenchidos pelo servidor
+  unitPriceOverride?: number; // admin-only effect
 }
 
-/** data dentro de StandardResponse<SaleResponse> ou ListResponse<SaleResponse> */
 export interface SaleResponse {
   id: string;
   productId: string | null;
-  productName: string;  // snapshot salvo no momento da venda
-  productSku: string;   // snapshot salvo no momento da venda
+  productName: string;
+  productSku: string;
   quantity: number;
   unitPrice: number;
   discount: number;
-  total: number;        // calculado pelo servidor: unitPrice * quantity * (1 - discount/100)
+  total: number;
   customerName: string | null;
   paymentMethod: PaymentMethod;
   size: string | null;
   color: string | null;
   notes: string | null;
-  createdAt: string; // ISO 8601
+  cancelledAt: string | null;
+  createdAt: string;
 }
 
-// Exemplos de uso:
-//   GET  /sales              → ListResponse<SaleResponse>    (200)
-//   GET  /sales?skip=0&limit=100
-//   GET  /sales/{id}         → StandardResponse<SaleResponse> (200)
-//   POST /sales              → StandardResponse<SaleResponse> (201)
-//     └─ 409 se estoque insuficiente
-//     └─ 404 se produto não encontrado
+// Authz:
+//   GET    /sales                    → autenticado (+ meta)
+//   GET    /sales/{id}               → autenticado
+//   POST   /sales                    → admin|operator → 201
+//   POST   /sales/{id}/cancel        → admin → StandardResponse<SaleResponse>; restaura estoque; 2º → 409
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Doações — /api/v1/donations
+// Doações — /api/v1/donations  (admin only)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** POST /donations */
 export interface DonationInput {
-  direction?: DonationDirection; // default: "recebida"
-  donorName?: string;            // preencher quando direction="recebida"
-  recipientName?: string;        // preencher quando direction="doada"
+  direction?: DonationDirection;
+  donorName?: string;
+  recipientName?: string;
   description: string;
   category: DonationCategory;
   productType?: string;
-  monetaryValue?: number;        // default 0
+  monetaryValue?: number;
   notes?: string;
 }
 
-/** data dentro de StandardResponse<DonationResponse> ou ListResponse<DonationResponse> */
+export interface DonationPatchInput {
+  direction?: DonationDirection;
+  donorName?: string;
+  recipientName?: string;
+  description?: string;
+  category?: DonationCategory;
+  productType?: string;
+  monetaryValue?: number;
+  notes?: string;
+}
+
 export interface DonationResponse {
   id: string;
   direction: DonationDirection;
@@ -235,20 +325,25 @@ export interface DonationResponse {
   productType: string | null;
   monetaryValue: number;
   notes: string;
-  createdAt: string; // ISO 8601
+  createdAt: string;
 }
 
-// Exemplos de uso:
-//   GET    /donations              → ListResponse<DonationResponse>    (200)
-//   GET    /donations?skip=0&limit=100
-//   GET    /donations/{id}         → StandardResponse<DonationResponse> (200)
-//   POST   /donations              → StandardResponse<DonationResponse> (201)
-//   DELETE /donations/{id}         → 204 No Content
+// Authz (admin only):
+//   GET    /donations                → ListResponse + meta
+//   GET    /donations/{id}           → StandardResponse
+//   POST   /donations                → 201
+//   PATCH  /donations/{id}           → parcial (DonationPatchInput)
+//   DELETE /donations/{id}           → 204 hard delete
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Relatórios — /api/v1/reports
-// ATENÇÃO: este endpoint NÃO usa envelope StandardResponse — retorna direto.
+// Relatórios — /api/v1/reports  (admin only, COM envelope StandardResponse)
 // ─────────────────────────────────────────────────────────────────────────────
+
+export interface ReportQuery {
+  days?: number;
+  paymentMethods?: string;
+  donationCategories?: string;
+}
 
 export interface TopProduct {
   name: string;
@@ -261,41 +356,33 @@ export interface SalesByPaymentMethod {
   method: string;
   count: number;
   revenue: number;
-  pct: number; // percentual sobre o total de vendas (0-100)
+  pct: number;
 }
 
 export interface RevenueByDay {
-  date: string;    // "YYYY-MM-DD"
+  date: string;
   revenue: number;
   donations: number;
   count: number;
 }
 
-/** GET /reports — retorno DIRETO (sem envelope) */
+/**
+ * Payload em StandardResponse<ReportResponse> — GET /reports.
+ * Vendas canceladas NÃO entram nos totais.
+ */
 export interface ReportResponse {
   totalRevenue: number;
   totalSales: number;
   averageTicket: number;
   totalDonationsMonetary: number;
   totalDonationsCount: number;
+  totalDonationsOutgoingMonetary: number;
+  totalDonationsOutgoingCount: number;
   totalCombined: number;
-  topProductsByRevenue: TopProduct[];  // top 5
-  topProductsByUnits: TopProduct[];    // top 5
+  topProductsByRevenue: TopProduct[];
+  topProductsByUnits: TopProduct[];
   salesByPaymentMethod: SalesByPaymentMethod[];
-  revenueByDay: RevenueByDay[];        // um item por dia na janela
+  revenueByDay: RevenueByDay[];
 }
 
-// Query params:
-//   days               → número de dias (1-365, default 30)
-//   paymentMethods     → CSV ex: "pix,dinheiro"
-//   donationCategories → CSV ex: "roupas,dinheiro"
-//
-// Exemplo: GET /reports?days=30&paymentMethods=pix,dinheiro
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Observabilidade — sem autenticação
-// ─────────────────────────────────────────────────────────────────────────────
-
-// GET /health → { status: "healthy", timestamp: string }
-// GET /ready  → { status: "ready",   timestamp: string }  ou 503 se DB offline
-// GET /live   → { status: "alive",   timestamp: string }
+// GET /health | /ready | /live — raiz do host (fora do envelope)

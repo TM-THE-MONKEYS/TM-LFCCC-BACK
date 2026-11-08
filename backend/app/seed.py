@@ -2,33 +2,42 @@
 
 Idempotente: pode ser executado várias vezes sem criar registros duplicados.
 
+Bloqueado em production (use `python -m app.cli create-admin`).
+
 Uso:
     python -m app.seed
     # ou com Docker:
     docker compose exec api python -m app.seed
 """
 
+from __future__ import annotations
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.core.database import SessionLocal
+from app.core.enums import UserRole
 from app.core.security import hash_password
 from app.models.donation import Donation
 from app.models.product import Product
 from app.models.sale import Sale
 from app.models.user import User
+from app.schemas.sale import SaleInput
+from app.services.sale_service import SaleService
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Dados iniciais ────────────────────────────────────────────────────────────
 
-PRODUCTS = [
+PRODUCTS: list[dict[str, Any]] = [
     {
         "sku": "CAM-001",
         "name": "Camiseta Básica Branca",
@@ -101,7 +110,7 @@ PRODUCTS = [
     },
 ]
 
-DONATIONS = [
+DONATIONS: list[dict[str, Any]] = [
     {
         "direction": "recebida",
         "donor_name": "Maria Silva",
@@ -147,33 +156,46 @@ DONATIONS = [
 
 # ── Seed functions ─────────────────────────────────────────────────────────────
 
-def seed_admin(db: Session) -> User:
-    existing = db.query(User).filter(User.email == settings.ADMIN_EMAIL).first()
+
+def seed_admin(db: Session) -> User | None:
+    """Cria admin inicial. Prefer CLI em produção (`python -m app.cli create-admin`)."""
+    cfg = get_settings()
+    email = cfg.ADMIN_EMAIL.strip().lower()
+    existing = db.query(User).filter(User.email == email).first()
     if existing:
-        print(f"  [skip] Admin '{settings.ADMIN_EMAIL}' já existe.")
+        print(f"  [skip] Admin '{email}' já existe.")
         return existing
+
+    password = cfg.admin_password_value
+    if password == "changeme" and cfg.ENVIRONMENT != "test":
+        print(
+            "  [warn] ADMIN_PASSWORD ainda é o padrão 'changeme'. "
+            "Troque antes de ir para produção. Prefira: python -m app.cli create-admin"
+        )
 
     user = User(
         id=str(uuid.uuid4()),
         name="Admin",
-        email=settings.ADMIN_EMAIL,
-        password_hash=hash_password(settings.ADMIN_PASSWORD),
+        email=email,
+        password_hash=hash_password(password),
+        role=UserRole.admin.value,
         is_active=True,
         created_at=_now(),
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    print(f"  [ok]   Admin criado: {settings.ADMIN_EMAIL}")
+    print(f"  [ok]   Admin criado: {email} (role=admin)")
     return user
 
 
 def seed_products(db: Session) -> list[Product]:
     seeded: list[Product] = []
     for data in PRODUCTS:
-        existing = db.query(Product).filter(Product.sku == data["sku"]).first()
+        sku = str(data["sku"])
+        existing = db.query(Product).filter(Product.sku == sku).first()
         if existing:
-            print(f"  [skip] Produto '{data['sku']}' já existe.")
+            print(f"  [skip] Produto '{sku}' já existe.")
             seeded.append(existing)
             continue
 
@@ -186,7 +208,7 @@ def seed_products(db: Session) -> list[Product]:
         )
         db.add(product)
         seeded.append(product)
-        print(f"  [ok]   Produto criado: {data['sku']} — {data['name']}")
+        print(f"  [ok]   Produto criado: {sku} — {data['name']}")
 
     db.commit()
     for p in seeded:
@@ -195,61 +217,57 @@ def seed_products(db: Session) -> list[Product]:
 
 
 def seed_sales(db: Session, products: list[Product]) -> None:
-    # Pula se já existirem vendas (verificação de idempotência)
+    """Cria vendas de exemplo via SaleService (mesmas regras da API)."""
     if db.query(Sale).count() > 0:
         print("  [skip] Vendas já existem.")
         return
 
     product_map = {p.sku: p for p in products}
+    service = SaleService(db)
 
-    sales_data = [
+    sales_data: list[dict[str, Any]] = [
         {
             "sku": "CAM-001",
             "quantity": 2,
             "payment_method": "pix",
             "customer_name": "Ana Paula",
-            "discount": 0.0,
+            "discount": Decimal("0.00"),
         },
         {
             "sku": "VES-001",
             "quantity": 1,
             "payment_method": "cartao_debito",
             "customer_name": "Beatriz Lima",
-            "discount": 10.0,
+            "discount": Decimal("10.00"),
         },
         {
             "sku": "CAL-001",
             "quantity": 1,
             "payment_method": "dinheiro",
             "customer_name": None,
-            "discount": 0.0,
+            "discount": Decimal("0.00"),
         },
     ]
 
     for data in sales_data:
-        product = product_map.get(data["sku"])
-        if product is None or product.quantity < data["quantity"]:
-            print(f"  [skip] Venda {data['sku']} ignorada (produto ausente ou sem estoque).")
+        sku = str(data["sku"])
+        product = product_map.get(sku)
+        qty = int(data["quantity"])
+        if product is None or product.quantity < qty:
+            print(f"  [skip] Venda {sku} ignorada (produto ausente ou sem estoque).")
             continue
 
-        total = round(product.price * data["quantity"] * (1 - data["discount"] / 100), 2)
-
-        sale = Sale(
-            id=str(uuid.uuid4()),
-            product_id=product.id,
-            product_name=product.name,
-            product_sku=product.sku,
-            quantity=data["quantity"],
-            unit_price=product.price,
-            discount=data["discount"],
-            total=total,
-            customer_name=data["customer_name"],
-            payment_method=data["payment_method"],
-            created_at=_now(),
+        service.create(
+            SaleInput(
+                product_id=product.id,
+                quantity=qty,
+                payment_method=data["payment_method"],
+                customer_name=data["customer_name"],
+                discount=data["discount"],
+            ),
+            actor_role=UserRole.admin.value,
         )
-        db.add(sale)
-        product.quantity -= data["quantity"]
-        print(f"  [ok]   Venda criada: {data['sku']} × {data['quantity']}")
+        print(f"  [ok]   Venda criada: {sku} × {qty}")
 
     db.commit()
 
@@ -260,18 +278,22 @@ def seed_donations(db: Session) -> None:
         return
 
     for data in DONATIONS:
+        description = str(data["description"])
         donation = Donation(
             id=str(uuid.uuid4()),
             created_at=_now(),
             **data,
         )
         db.add(donation)
-        print(f"  [ok]   Doação criada: {data['direction']} — {data['description'][:40]}")
+        print(f"  [ok]   Doação criada: {data['direction']} — {description[:40]}")
 
     db.commit()
 
 
 def run_seed() -> None:
+    if get_settings().is_production:
+        raise SystemExit("Seed bloqueado em production. Use: python -m app.cli create-admin")
+
     db: Session = SessionLocal()
     try:
         print("\n=== Seed: Admin ===")

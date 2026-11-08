@@ -1,7 +1,12 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ProductCategory(str, Enum):
+class UserRole(StrEnum):
+    admin = "admin"
+    operator = "operator"
+
+
+class ProductCategory(StrEnum):
     camiseta = "camiseta"
     calca = "calca"
     vestido = "vestido"
@@ -12,7 +17,7 @@ class ProductCategory(str, Enum):
     outro = "outro"
 
 
-class ClothingSize(str, Enum):
+class ClothingSize(StrEnum):
     PP = "PP"
     P = "P"
     M = "M"
@@ -28,7 +33,7 @@ class ClothingSize(str, Enum):
     size_48 = "48"
 
 
-class PaymentMethod(str, Enum):
+class PaymentMethod(StrEnum):
     dinheiro = "dinheiro"
     cartao_credito = "cartao_credito"
     cartao_debito = "cartao_debito"
@@ -36,12 +41,12 @@ class PaymentMethod(str, Enum):
     boleto = "boleto"
 
 
-class DonationDirection(str, Enum):
+class DonationDirection(StrEnum):
     recebida = "recebida"
     doada = "doada"
 
 
-class DonationCategory(str, Enum):
+class DonationCategory(StrEnum):
     dinheiro = "dinheiro"
     roupas = "roupas"
     calcados = "calcados"

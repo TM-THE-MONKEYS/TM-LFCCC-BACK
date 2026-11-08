@@ -1,17 +1,18 @@
 """Handlers de exceção HTTP — mapeamento de exceções de domínio para respostas HTTP.
 
-Registre todos os handlers chamando register_exception_handlers(app) no main.py.
+Registre todos os handlers chamando register_exception_handlers(app) no create_app.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError, IntegrityError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.schemas.common import ErrorDetail, ErrorResponse
+from app.core.logging import logger
 from app.exceptions.domain import (
-    AppException,
     ConflictError,
     ForbiddenError,
     InsufficientStockError,
@@ -19,10 +20,11 @@ from app.exceptions.domain import (
     UnauthorizedError,
     UnprocessableError,
 )
+from app.schemas.common import ErrorDetail, ErrorResponse
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def error_response(
@@ -71,11 +73,27 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return error_response(409, exc.message)
 
-    # ── Exceções nativas do FastAPI / Starlette ────────────────────────────────
+    # ── SQLAlchemy constraint / data errors ───────────────────────────────────
 
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-        return error_response(exc.status_code, str(exc.detail))
+    @app.exception_handler(IntegrityError)
+    async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+        logger.warning("integrity_error path=%s", request.url.path)
+        return error_response(409, "Conflito de integridade nos dados.")
+
+    @app.exception_handler(DataError)
+    async def data_error_handler(request: Request, exc: DataError) -> JSONResponse:
+        logger.warning("data_error path=%s", request.url.path)
+        return error_response(422, "Dados inválidos para persistência.")
+
+    # ── Starlette/FastAPI HTTP (inclui 404 de rota desconhecida) ──────────────
+
+    @app.exception_handler(StarletteHTTPException)
+    async def starlette_http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        detail = exc.detail
+        message = detail if isinstance(detail, str) else str(detail)
+        return error_response(exc.status_code, message)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(
@@ -89,4 +107,9 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception(
+            "unhandled_exception path=%s method=%s",
+            request.url.path,
+            request.method,
+        )
         return error_response(500, "Erro interno do servidor.")

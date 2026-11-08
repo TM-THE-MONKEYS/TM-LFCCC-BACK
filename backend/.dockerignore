@@ -1,0 +1,48 @@
+# VCS / IDE
+.git
+.gitignore
+.idea
+.vscode
+.cursor
+.agents
+
+# Local env & secrets
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Python caches / venvs
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+dist
+build
+
+# Tests & local DB / uploads content
+tests
+*.db
+*.sqlite3
+uploads/**
+!uploads/.gitkeep
+
+# Docs / contracts not needed at runtime
+docs
+*.md
+!README.md
+api-contract.d.ts
+FRONTEND_INTEGRATION.md
+CONTRIBUTING.md
+CHANGELOG.md
+
+# CI / tooling
+.github
+.pre-commit-config.yaml
+scripts

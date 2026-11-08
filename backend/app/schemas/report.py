@@ -1,39 +1,41 @@
-from typing import List
-
 from pydantic import BaseModel
+
+from app.core.money import MoneyDecimal
 
 
 class TopProduct(BaseModel):
     name: str
     sku: str
-    revenue: float
+    revenue: MoneyDecimal
     units: int
 
 
 class SalesByPaymentMethod(BaseModel):
     method: str
     count: int
-    revenue: float
+    revenue: MoneyDecimal
     pct: float
 
 
 class RevenueByDay(BaseModel):
     date: str
-    revenue: float
-    donations: float
+    revenue: MoneyDecimal
+    donations: MoneyDecimal
     count: int
 
 
 class ReportResponse(BaseModel):
-    """Formato da resposta de relatórios, sem envelope StandardResponse."""
+    """Payload de relatórios (envolvido por StandardResponse na rota GET /reports)."""
 
-    totalRevenue: float
+    totalRevenue: MoneyDecimal
     totalSales: int
-    averageTicket: float
-    totalDonationsMonetary: float
+    averageTicket: MoneyDecimal
+    totalDonationsMonetary: MoneyDecimal
     totalDonationsCount: int
-    totalCombined: float
-    topProductsByRevenue: List[TopProduct]
-    topProductsByUnits: List[TopProduct]
-    salesByPaymentMethod: List[SalesByPaymentMethod]
-    revenueByDay: List[RevenueByDay]
+    totalDonationsOutgoingMonetary: MoneyDecimal
+    totalDonationsOutgoingCount: int
+    totalCombined: MoneyDecimal
+    topProductsByRevenue: list[TopProduct]
+    topProductsByUnits: list[TopProduct]
+    salesByPaymentMethod: list[SalesByPaymentMethod]
+    revenueByDay: list[RevenueByDay]
