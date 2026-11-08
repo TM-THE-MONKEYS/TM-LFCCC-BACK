@@ -24,6 +24,8 @@ def test_seed_blocked_in_production(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "a" * 32 + "-producao-segura")
     monkeypatch.setenv("ADMIN_PASSWORD", "senha-forte-producao-123")
     monkeypatch.setenv("CORS_ORIGINS", "https://vitrine.example.com")
+    monkeypatch.setenv("CREATE_TABLES_ON_STARTUP", "false")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://vitrine:vitrine@db:5432/vitrine")
     get_settings.cache_clear()
     assert Settings(_env_file=None).is_production
     get_settings.cache_clear()

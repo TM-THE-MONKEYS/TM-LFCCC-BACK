@@ -56,6 +56,8 @@ def test_production_accepts_safe_config(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "a" * 32 + "-producao-segura")
     monkeypatch.setenv("ADMIN_PASSWORD", "senha-forte-producao-123")
     monkeypatch.setenv("CORS_ORIGINS", "https://vitrine.example.com")
+    monkeypatch.setenv("CREATE_TABLES_ON_STARTUP", "false")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://vitrine:vitrine@db:5432/vitrine")
     from app.core.config import Settings
 
     s = Settings(_env_file=None)
@@ -93,3 +95,5 @@ def test_security_headers_present(client):
     r = client.get("/health")
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "Referrer-Policy" in r.headers
+    assert "Permissions-Policy" in r.headers
+    assert r.headers.get("Cache-Control") == "no-store"

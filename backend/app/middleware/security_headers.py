@@ -6,6 +6,8 @@ from starlette.responses import Response
 
 from app.core.config import settings
 
+_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()"
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -13,6 +15,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", _PERMISSIONS_POLICY)
+        # API responses must not be cached by shared proxies; static uploads keep defaults.
+        if not request.url.path.startswith("/uploads"):
+            response.headers.setdefault("Cache-Control", "no-store")
         # HSTS only when the request arrived over HTTPS (or behind TLS-terminating proxy)
         forwarded_proto = request.headers.get("x-forwarded-proto", "")
         if request.url.scheme == "https" or forwarded_proto.lower() == "https":

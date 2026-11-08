@@ -1,13 +1,12 @@
-from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.datetime_parse import parse_iso_dt
 from app.api.deps import get_current_user, get_db, require_role
+from app.api.openapi_responses import OPENAPI_ERRORS
 from app.core.enums import PaymentMethod, UserRole
-from app.exceptions import UnprocessableError
 from app.models.user import User
 from app.schemas.common import ListResponse, PaginationMeta, StandardResponse
 from app.schemas.sale import SaleInput, SaleResponse
@@ -15,39 +14,13 @@ from app.services.sale_service import SaleService
 
 router = APIRouter()
 
-_OPENAPI_ERRORS: dict[int | str, dict[str, Any]] = {
-    401: {"description": "Não autenticado"},
-    403: {"description": "Sem permissão"},
-    404: {"description": "Não encontrado"},
-    409: {"description": "Conflito"},
-    422: {"description": "Validação inválida"},
-}
-
-
-def _parse_iso_dt(raw: str | None, *, end_of_day: bool = False) -> datetime | None:
-    if raw is None or not raw.strip():
-        return None
-    value = raw.strip()
-    try:
-        if len(value) == 10 and value[4] == "-" and value[7] == "-":
-            dt = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
-            if end_of_day:
-                return dt.replace(hour=23, minute=59, second=59, microsecond=999000)
-            return dt
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt
-    except ValueError as exc:
-        raise UnprocessableError(f"Data inválida: '{raw}'. Use YYYY-MM-DD ou ISO 8601.") from exc
-
 
 @router.get(
     "",
     response_model=ListResponse[SaleResponse],
     summary="Listar vendas",
     operation_id="list_sales",
-    responses={401: _OPENAPI_ERRORS[401], 422: _OPENAPI_ERRORS[422]},
+    responses={401: OPENAPI_ERRORS[401], 422: OPENAPI_ERRORS[422]},
 )
 def list_sales(
     skip: int = Query(default=0, ge=0),
@@ -63,8 +36,8 @@ def list_sales(
     items, total = SaleService(db).list_filtered(
         skip=skip,
         limit=limit,
-        from_dt=_parse_iso_dt(from_),
-        to_dt=_parse_iso_dt(to, end_of_day=True),
+        from_dt=parse_iso_dt(from_),
+        to_dt=parse_iso_dt(to, end_of_day=True),
         payment_method=paymentMethod.value if paymentMethod else None,
         product_id=str(productId) if productId else None,
         include_cancelled=includeCancelled,
@@ -81,7 +54,7 @@ def list_sales(
     response_model=StandardResponse[SaleResponse],
     summary="Detalhe da venda",
     operation_id="get_sale",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def get_sale(
     sale_id: UUID,
@@ -100,7 +73,7 @@ def get_sale(
     status_code=status.HTTP_201_CREATED,
     summary="Registrar venda",
     operation_id="create_sale",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def create_sale(
     data: SaleInput,
@@ -120,7 +93,7 @@ def create_sale(
     response_model=StandardResponse[SaleResponse],
     summary="Cancelar/estornar venda e restaurar estoque",
     operation_id="cancel_sale",
-    responses=_OPENAPI_ERRORS,
+    responses=OPENAPI_ERRORS,
 )
 def cancel_sale(
     sale_id: UUID,

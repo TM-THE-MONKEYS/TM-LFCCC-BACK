@@ -69,3 +69,16 @@ class ErrorResponse(BaseModel):
     message: str
     details: list[ErrorDetail] | None = None
     timestamp: str
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": 422,
+                    "message": "Erro de validação dos dados enviados.",
+                    "details": [{"field": "price", "message": "Input should be greater than 0"}],
+                    "timestamp": "2026-11-08T18:00:00.000Z",
+                }
+            ]
+        }
+    )

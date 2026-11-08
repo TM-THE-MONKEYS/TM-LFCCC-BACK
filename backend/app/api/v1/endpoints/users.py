@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
+from app.api.openapi_responses import OPENAPI_ERRORS
 from app.core.enums import UserRole
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -18,6 +18,7 @@ router = APIRouter()
     response_model=ListResponse[UserResponse],
     summary="Listar usuários",
     operation_id="list_users",
+    responses={401: OPENAPI_ERRORS[401], 403: OPENAPI_ERRORS[403]},
 )
 def list_users(
     skip: int = Query(default=0, ge=0),
@@ -25,8 +26,9 @@ def list_users(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin)),
 ):
-    total = int(db.scalar(select(func.count()).select_from(User)) or 0)
-    users = UserRepository(db).list_all(skip=skip, limit=limit)
+    repo = UserRepository(db)
+    total = repo.count()
+    users = repo.list_all(skip=skip, limit=limit)
     return ListResponse(
         message="Usuários listados com sucesso.",
         data=[UserResponse.model_validate(u) for u in users],
@@ -40,6 +42,12 @@ def list_users(
     status_code=status.HTTP_201_CREATED,
     summary="Criar usuário",
     operation_id="create_user",
+    responses={
+        401: OPENAPI_ERRORS[401],
+        403: OPENAPI_ERRORS[403],
+        409: OPENAPI_ERRORS[409],
+        422: OPENAPI_ERRORS[422],
+    },
 )
 def create_user(
     data: UserCreate,

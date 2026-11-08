@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/) for the p
 
 ### Added
 
+- Request access logging middleware (`http_request` / `slow_request`) with correlation_id, duration, query **keys** only (no values/secrets)
+- `Permissions-Policy` + `Cache-Control: no-store` on API responses (uploads excluded from no-store)
+- Auth login OpenAPI summaries + `429` docs; `Retry-After: 60` on rate limit
+- Shared `parse_iso_dt` and `OPENAPI_ERRORS` helpers for consistent API docs
+- Production settings reject `CREATE_TABLES_ON_STARTUP=true` and SQLite `DATABASE_URL`
+- Tests: cancel authz (operator 403), soft-delete cannot sell, `isActive=false` listing, correlation ID, readiness
+
+### Changed
+
+- `/ready` executes `SELECT 1` (not connect-only); Docker HEALTHCHECK uses `/ready`
+- Auth/Users routers: OpenAPI response maps aligned with other resources
+- User listing count moved into `UserRepository.count()`
+
+### Added (earlier)
+
 - FASE 6 ops: multi-stage Dockerfile (non-root, HEALTHCHECK, gunicorn + UvicornWorker)
 - Compose profile `migrate` (Alembic one-shot) + named volume `uploads_data`
 - CI: ruff check/format, mypy, pytest+cov fail-under, Postgres job (alembic upgrade/check + pytest), pip-audit

@@ -1,9 +1,8 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
+from app.api.openapi_responses import OPENAPI_ERRORS
 from app.core.enums import DonationCategory, PaymentMethod, UserRole
 from app.exceptions import UnprocessableError
 from app.models.user import User
@@ -15,12 +14,6 @@ router = APIRouter()
 
 _PAYMENT_VALUES = {e.value for e in PaymentMethod}
 _DONATION_CATEGORY_VALUES = {e.value for e in DonationCategory}
-
-_OPENAPI_ERRORS: dict[int | str, dict[str, Any]] = {
-    401: {"description": "Não autenticado"},
-    403: {"description": "Sem permissão"},
-    422: {"description": "Validação inválida"},
-}
 
 
 def _parse_csv_against_enum(
@@ -48,7 +41,11 @@ def _parse_csv_against_enum(
     response_model=StandardResponse[ReportResponse],
     summary="Relatório agregado de vendas e doações",
     operation_id="get_reports",
-    responses=_OPENAPI_ERRORS,
+    responses={
+        401: OPENAPI_ERRORS[401],
+        403: OPENAPI_ERRORS[403],
+        422: OPENAPI_ERRORS[422],
+    },
 )
 def get_reports(
     days: int = Query(default=30, ge=1, le=365, description="Janela de dias"),
