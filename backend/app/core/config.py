@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Localiza o .env relativo a este arquivo (backend/.env) para que as configurações
@@ -22,6 +22,8 @@ _WEAK_JWT_SECRETS = frozenset(
     }
 )
 _DEFAULT_ADMIN_PASSWORD = "changeme"
+# Sem refresh token, o access token é a sessão inteira: limite de 24h em produção.
+_MAX_PROD_JWT_EXPIRE_MINUTES = 24 * 60
 
 
 class Settings(BaseSettings):
@@ -34,7 +36,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["local", "test", "production"] = "local"
     DATABASE_URL: str = "postgresql+psycopg2://vitrine:vitrine@localhost:5432/vitrine"
     JWT_SECRET: SecretStr = SecretStr("dev-secret-troque-em-producao-minimo-32-chars")
-    JWT_EXPIRE_MINUTES: int = 60
+    JWT_EXPIRE_MINUTES: int = Field(default=60, ge=1)
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
     APP_TIMEZONE: str = "America/Sao_Paulo"
     UPLOAD_DIR: str = "uploads"
@@ -90,6 +92,12 @@ class Settings(BaseSettings):
             errors.append("JWT_SECRET deve ter no mínimo 32 caracteres em produção.")
         if secret in _WEAK_JWT_SECRETS or secret.lower().startswith("dev-secret"):
             errors.append("JWT_SECRET é um valor conhecido/fraco — defina um segredo forte.")
+
+        if self.JWT_EXPIRE_MINUTES > _MAX_PROD_JWT_EXPIRE_MINUTES:
+            errors.append(
+                f"JWT_EXPIRE_MINUTES não pode passar de {_MAX_PROD_JWT_EXPIRE_MINUTES} em "
+                "produção (recomendado: 720)."
+            )
 
         if self.ADMIN_PASSWORD.get_secret_value() == _DEFAULT_ADMIN_PASSWORD:
             errors.append("ADMIN_PASSWORD não pode ser o valor padrão 'changeme' em produção.")
