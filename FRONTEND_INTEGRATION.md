@@ -159,7 +159,9 @@ Response **200** (`StandardResponse<TokenResponse>`):
 | CRUD `/donations` + `PATCH`                 |         |          |   ✓   |
 | `GET /reports`                              |         |          |   ✓   |
 | `GET /auth/me`                              |         |    ✓     |   ✓   |
-| `GET/POST /users`                           |         |          |   ✓   |
+| `GET/POST /users`, `PATCH /users/{id}`      |         |          |   ✓   |
+| `POST /users/{id}/password`                 |         |          |   ✓   |
+| `POST /users/me/password`                   |         |    ✓     |   ✓   |
 
 \* Schema público (sem `costPrice`).  
 † Resposta `ProductPublicResponse` (sem `costPrice`).  
@@ -283,12 +285,25 @@ Timezone: buckets diários / janela `days` usam `APP_TIMEZONE` (default **Americ
 
 ---
 
-### 6.5 Usuários — `/api/v1/users` — **admin only**
+### 6.5 Usuários — `/api/v1/users`
 
-| Método | Rota | Response                          |
-| ------ | ---- | --------------------------------- |
-| GET    | `/`  | `ListResponse<UserResponse>` + meta |
-| POST   | `/`  | `201` + `StandardResponse<User…>` |
+| Método | Rota             | Auth        | Body                                  | Response                            |
+| ------ | ---------------- | ----------- | ------------------------------------- | ----------------------------------- |
+| GET    | `/`              | admin       | —                                     | `ListResponse<UserResponse>` + meta |
+| POST   | `/`              | admin       | `UserCreate`                          | `201` + `StandardResponse<User…>`   |
+| PATCH  | `/{id}`          | admin       | `UserPatchInput` (parcial)            | `StandardResponse<UserResponse>`    |
+| POST   | `/{id}/password` | admin       | `{ newPassword }`                     | `StandardResponse<UserResponse>`    |
+| POST   | `/me/password`   | autenticado | `{ currentPassword, newPassword }`    | `StandardResponse<UserResponse>`    |
+
+- `PATCH`: `name`, `role`, `isActive`; omitidos ou `null` não mudam.
+- **409** ao desativar/rebaixar a própria conta ou o último admin ativo; **409** se o admin tentar
+  redefinir a própria senha por `/{id}/password` (use `/me/password`).
+- Desativar (`isActive: false`) corta o acesso na hora: tokens existentes do usuário passam a
+  responder **401** e o login é recusado.
+- Senha: mínimo 8 caracteres, máximo 72 bytes. `/me/password`: senha atual errada ou nova igual à
+  atual → **422** (não 401, para o front não deslogar); 5 tentativas/min por usuário → **429**
+  com `Retry-After: 60`.
+- Trocar/redefinir senha **não** invalida tokens já emitidos (eles expiram em `JWT_EXPIRE_MINUTES`).
 
 ---
 

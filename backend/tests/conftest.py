@@ -27,7 +27,7 @@ os.environ.setdefault("ENVIRONMENT", "test")
 from app.api.deps import get_db  # noqa: E402
 from app.core.database import Base  # noqa: E402
 from app.core.enums import UserRole  # noqa: E402
-from app.core.rate_limit import login_rate_limiter  # noqa: E402
+from app.core.rate_limit import login_rate_limiter, password_change_rate_limiter  # noqa: E402
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.user import User  # noqa: E402
@@ -54,8 +54,10 @@ IS_POSTGRES = TEST_DATABASE_URL.startswith("postgresql")
 @pytest.fixture(autouse=True)
 def _reset_login_rate_limiter():
     login_rate_limiter.reset()
+    password_change_rate_limiter.reset()
     yield
     login_rate_limiter.reset()
+    password_change_rate_limiter.reset()
 
 
 @pytest.fixture

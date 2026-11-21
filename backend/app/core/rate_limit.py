@@ -40,3 +40,7 @@ class InMemoryRateLimiter:
 
 # Login: 10 attempts / minute per IP+email
 login_rate_limiter = InMemoryRateLimiter(max_attempts=10, window_seconds=60.0)
+
+# Own password change: 5 attempts / minute per user (guards guessing the current password
+# with a stolen token).
+password_change_rate_limiter = InMemoryRateLimiter(max_attempts=5, window_seconds=60.0)
