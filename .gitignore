@@ -20,6 +20,9 @@ backend/.venv/
 .env.local
 !.env.example
 !.env.local.example
+!deploy/.env.prod.example
+deploy/.env
+deploy/.env.prod
 
 # Database
 *.db

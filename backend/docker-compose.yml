@@ -1,3 +1,7 @@
+# DEV / local — build a partir de ./Dockerfile.
+# Produção on-prem (imagens GHCR + front + backup): use ../deploy/ (ver deploy/README.md).
+# Não misture este arquivo com deploy/docker-compose.yml no mesmo host sem cuidado.
+#
 # Secrets (JWT_SECRET, ADMIN_PASSWORD, POSTGRES_PASSWORD) come from env / .env only.
 # Never bake credentials into the image. Variáveis obrigatórias falham o `docker compose`
 # com mensagem explícita se ausentes — veja .env.example.
@@ -41,6 +45,7 @@ services:
     networks:
       - vitrine
     logging: *default-logging
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vitrine} -d ${POSTGRES_DB:-vitrine}"]
       interval: 10s

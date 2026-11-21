@@ -1,0 +1,4 @@
+# Shell scripts for Ubuntu VM must stay LF even when edited on Windows.
+deploy/scripts/*.sh text eol=lf
+deploy/**/*.yml text eol=lf
+deploy/**/*.yaml text eol=lf
