@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     APP_TIMEZONE: str = "America/Sao_Paulo"
     UPLOAD_DIR: str = "uploads"
     PUBLIC_BASE_URL: str = "http://localhost:8000"
+    # Teto de resolução do upload (largura × altura), checado antes de decodificar.
+    MAX_IMAGE_PIXELS: int = Field(default=40_000_000, ge=1)
     ADMIN_EMAIL: str = "admin@vitrine.local"
     ADMIN_PASSWORD: SecretStr = SecretStr(_DEFAULT_ADMIN_PASSWORD)
     ALLOWED_HOSTS: str = "localhost,127.0.0.1"

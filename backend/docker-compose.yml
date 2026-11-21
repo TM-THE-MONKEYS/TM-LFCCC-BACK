@@ -74,6 +74,7 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       UPLOAD_DIR: /app/uploads
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-40000000}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@vitrine.local}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       # Em prod: IP/sub-rede do proxy (ex.: VITRINE_SUBNET). Nunca "*".
