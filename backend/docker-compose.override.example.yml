@@ -1,0 +1,8 @@
+# Dev only — publica a API em 127.0.0.1:8000 para testar sem o nginx do front.
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+# O docker compose carrega docker-compose.override.yml automaticamente (ignorado pelo git).
+# Não use em produção: a API deve ser alcançada só pelo proxy na rede interna.
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"

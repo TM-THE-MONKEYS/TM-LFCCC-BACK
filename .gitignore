@@ -53,6 +53,7 @@ Thumbs.db
 
 # Docker
 *.log
+backend/docker-compose.override.yml
 
 # Cursor / local agent config
 .agents/
