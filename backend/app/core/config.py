@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Em produção, deixe como false e use `alembic upgrade head`.
     CREATE_TABLES_ON_STARTUP: bool = False
 
+    # Sentry opcional: vazio = desligado. Só erros 5xx/não tratados viram evento.
+    SENTRY_DSN: SecretStr = SecretStr("")
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=0.0, ge=0.0, le=1.0)
+
     # Pool SQLAlchemy (ignorado para SQLite)
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20

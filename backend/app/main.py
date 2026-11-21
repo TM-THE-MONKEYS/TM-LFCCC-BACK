@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1.router import router as api_v1_router
 from app.core.config import Settings, get_settings, resolve_upload_dir
 from app.core.logging import configure_logging, logger
+from app.core.observability import init_sentry
 from app.exceptions.handlers import register_exception_handlers
 from app.middleware.correlation import CorrelationIdMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
@@ -38,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging()
     upload_dir = resolve_upload_dir(cfg)
     app_version = _app_version()
+    init_sentry(cfg, release=app_version)
 
     @asynccontextmanager
     async def lifespan(_fastapi_app: FastAPI):

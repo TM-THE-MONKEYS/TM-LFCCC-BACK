@@ -23,6 +23,7 @@ dependencies = [
     "email-validator>=2.1.0",
     "tzdata>=2024.1",  # IANA TZ database for zoneinfo on Windows (APP_TIMEZONE)
     "Pillow>=10.0.0",  # Upload: re-encode images to strip payloads / verify content
+    "sentry-sdk[fastapi]>=2.20.0",  # Optional error reporting (active only with SENTRY_DSN)
 ]
 
 [project.optional-dependencies]
