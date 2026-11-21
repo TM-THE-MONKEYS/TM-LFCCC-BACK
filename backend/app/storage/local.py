@@ -21,7 +21,7 @@ class LocalStorage(StorageBackend):
         if rel.startswith("uploads/"):
             rel = rel[len("uploads/") :]
         target = (self._base / rel).resolve()
-        if not str(target).startswith(str(self._base.resolve())):
+        if not target.is_relative_to(self._base.resolve()):
             raise ValueError("Caminho de armazenamento inválido.")
         return target
 
