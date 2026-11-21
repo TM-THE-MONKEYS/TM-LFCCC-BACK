@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Select, desc, func, select
+from sqlalchemy import Select, desc, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.sale import Sale
@@ -72,3 +72,12 @@ class SaleRepository:
     def update(self, sale: Sale) -> Sale:
         self.db.flush()
         return sale
+
+    def mark_cancelled_atomic(self, sale_id: str, cancelled_at: datetime) -> bool:
+        """Set cancelled_at only if still NULL. Returns True if this call cancelled the sale."""
+        result = self.db.execute(
+            update(Sale)
+            .where(Sale.id == sale_id, Sale.cancelled_at.is_(None))
+            .values(cancelled_at=cancelled_at)
+        )
+        return bool(getattr(result, "rowcount", 0))
