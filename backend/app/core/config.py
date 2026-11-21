@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
     APP_TIMEZONE: str = "America/Sao_Paulo"
     UPLOAD_DIR: str = "uploads"
-    PUBLIC_BASE_URL: str = "http://localhost:8000"
+    # Vazio → imageUrl relativo (/uploads/...), resolvido pela origem que o navegador usou
+    # (IP ou hostname na LAN). Defina só se as imagens vierem de outra origem/CDN.
+    PUBLIC_BASE_URL: str = ""
     # Teto de resolução do upload (largura × altura), checado antes de decodificar.
     MAX_IMAGE_PIXELS: int = Field(default=40_000_000, ge=1)
     ADMIN_EMAIL: str = "admin@vitrine.local"
@@ -82,6 +84,16 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+    @field_validator("PUBLIC_BASE_URL", mode="after")
+    @classmethod
+    def normalize_public_base_url(cls, v: str) -> str:
+        value = v.strip().rstrip("/")
+        if value and not value.startswith(("http://", "https://")):
+            raise ValueError(
+                "PUBLIC_BASE_URL deve começar com http:// ou https:// (ou ficar vazio)."
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_production_safety(self) -> "Settings":

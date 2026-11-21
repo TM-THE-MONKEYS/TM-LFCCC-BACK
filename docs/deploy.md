@@ -34,7 +34,10 @@ Compose monta o volume nomeado `uploads_data` em `/app/uploads` (persistente ent
 Variáveis:
 
 - `UPLOAD_DIR` — path no container (padrão `/app/uploads`)
-- `PUBLIC_BASE_URL` — base usada para montar `imageUrl` nas respostas
+- `PUBLIC_BASE_URL` — **opcional**. Vazio (padrão) → `imageUrl` relativo (`/uploads/products/<arquivo>`),
+  resolvido pelo navegador contra a origem que ele usou (IP ou hostname da LAN). Defina
+  (`http://…`/`https://…`) só se as imagens vierem de outra origem/CDN.
+- `MAX_IMAGE_PIXELS` — teto de resolução do upload (padrão 40 000 000 = 40 MP), checado antes de decodificar.
 
 ## Servindo `/uploads` (proxy / CDN)
 

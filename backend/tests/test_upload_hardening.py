@@ -14,9 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.services.product_service import ProductService
 from app.storage.local import LocalStorage
-from tests.test_products import _MIN_PNG
-
-BASE = "/api/v1/products"
+from tests.conftest import MIN_PNG, upload_image
 
 
 def _png_header_only(width: int, height: int) -> bytes:
@@ -35,26 +33,6 @@ def _png_header_only(width: int, height: int) -> bytes:
     )
 
 
-@pytest.fixture
-def tmp_storage(tmp_path: Path, monkeypatch) -> LocalStorage:
-    storage = LocalStorage(base_dir=tmp_path)
-    original_init = ProductService.__init__
-
-    def _init(self, db, storage_arg=None):
-        original_init(self, db, storage=storage)
-
-    monkeypatch.setattr(ProductService, "__init__", _init)
-    return storage
-
-
-def _upload(client, product_id: str, payload: bytes, headers: dict[str, str]):
-    return client.post(
-        f"{BASE}/{product_id}/image",
-        files={"file": ("img.png", payload, "image/png")},
-        headers=headers,
-    )
-
-
 # ── Pixel ceiling ────────────────────────────────────────────────────────────
 
 
@@ -62,7 +40,7 @@ def test_upload_above_pixel_limit_returns_422_without_decoding(
     client, created_product, admin_headers, tmp_storage
 ):
     # 8000×6250 = 50 MP > default 40 MP; the file is a few bytes (header only).
-    r = _upload(client, created_product["id"], _png_header_only(8000, 6250), admin_headers)
+    r = upload_image(client, created_product["id"], _png_header_only(8000, 6250), admin_headers)
 
     assert r.status_code == 422
     body = r.json()
@@ -72,7 +50,7 @@ def test_upload_above_pixel_limit_returns_422_without_decoding(
 
 
 def test_upload_decompression_bomb_returns_422(client, created_product, admin_headers, tmp_storage):
-    r = _upload(client, created_product["id"], _png_header_only(20000, 20000), admin_headers)
+    r = upload_image(client, created_product["id"], _png_header_only(20000, 20000), admin_headers)
 
     assert r.status_code == 422
     assert "resolução" in r.json()["message"].lower()
@@ -86,13 +64,13 @@ def test_pixel_limit_is_configurable(
     monkeypatch.setattr(get_settings(), "MAX_IMAGE_PIXELS", 1)
     tiny_but_two_pixels = _png_header_only(2, 1)
 
-    r = _upload(client, created_product["id"], tiny_but_two_pixels, admin_headers)
+    r = upload_image(client, created_product["id"], tiny_but_two_pixels, admin_headers)
 
     assert r.status_code == 422
 
 
 def test_upload_within_pixel_limit_succeeds(client, created_product, admin_headers, tmp_storage):
-    assert _upload(client, created_product["id"], _MIN_PNG, admin_headers).status_code == 200
+    assert upload_image(client, created_product["id"], MIN_PNG, admin_headers).status_code == 200
 
 
 # ── Old image removed only after commit ──────────────────────────────────────
@@ -100,7 +78,7 @@ def test_upload_within_pixel_limit_succeeds(client, created_product, admin_heade
 
 def _service_upload(service: ProductService, product_id: str) -> str:
     async def _run() -> str:
-        file = UploadFile(file=io.BytesIO(_MIN_PNG), filename="img.png")
+        file = UploadFile(file=io.BytesIO(MIN_PNG), filename="img.png")
         product = await service.upload_image(product_id, file)
         assert product.image_url is not None
         return product.image_url
