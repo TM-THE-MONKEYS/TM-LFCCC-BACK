@@ -230,6 +230,36 @@ def test_password_values_never_logged(client, admin_headers, operator_user, capl
     assert "user_password_reset" in caplog.text
 
 
+def test_admin_reset_password_rate_limited(client, admin_headers, operator_user, monkeypatch):
+    from app.core.rate_limit import password_change_rate_limiter
+
+    monkeypatch.setattr(password_change_rate_limiter, "max_attempts", 2)
+    password_change_rate_limiter.reset()
+    payload = {"newPassword": "nova-senha-caixa-1"}
+    assert (
+        client.post(
+            f"{BASE}/{operator_user.id}/password", json=payload, headers=admin_headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"{BASE}/{operator_user.id}/password",
+            json={"newPassword": "nova-senha-caixa-2"},
+            headers=admin_headers,
+        ).status_code
+        == 200
+    )
+    blocked = client.post(
+        f"{BASE}/{operator_user.id}/password",
+        json={"newPassword": "nova-senha-caixa-3"},
+        headers=admin_headers,
+    )
+    assert blocked.status_code == 429
+    assert blocked.headers["Retry-After"] == "60"
+    assert blocked.json()["status"] == 429
+
+
 # ── POST /users/me/password ──────────────────────────────────────────────────
 
 

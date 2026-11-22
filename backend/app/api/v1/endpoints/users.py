@@ -135,7 +135,10 @@ def patch_user(
     response_model=StandardResponse[UserResponse],
     summary="Redefinir senha de outro usuário (admin)",
     operation_id="reset_user_password",
-    responses=OPENAPI_ERRORS,
+    responses={
+        **OPENAPI_ERRORS,
+        429: OPENAPI_ERRORS[429],
+    },
 )
 def reset_user_password(
     user_id: UUID,
@@ -143,6 +146,14 @@ def reset_user_password(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(UserRole.admin)),
 ):
+    if not password_change_rate_limiter.is_allowed(actor.id):
+        logger.warning("user_password_reset outcome=rate_limited actor_id=%s", actor.id)
+        response = error_response(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Muitas tentativas de redefinição de senha. Aguarde um minuto e tente novamente.",
+        )
+        response.headers["Retry-After"] = "60"
+        return response
     user = UserService(db).reset_password(str(user_id), data, actor=actor)
     return StandardResponse(
         message="Senha redefinida com sucesso.",
