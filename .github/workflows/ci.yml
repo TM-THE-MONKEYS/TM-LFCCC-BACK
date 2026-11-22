@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop, devl]
+    branches: [main, master, develop, devl, chore/prod-readiness]
   pull_request:
 
 defaults:
