@@ -22,7 +22,13 @@ graceful_timeout = _int_env("GUNICORN_GRACEFUL_TIMEOUT", 30)
 max_requests = 1000
 max_requests_jitter = 100
 
-forwarded_allow_ips = os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1").strip() or "127.0.0.1"
+_raw_forwarded = os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1").strip() or "127.0.0.1"
+_forwarded_parts = [p.strip() for p in _raw_forwarded.split(",") if p.strip()]
+if not _forwarded_parts or "*" in _forwarded_parts:
+    raise SystemExit(
+        "FORWARDED_ALLOW_IPS não pode ser '*' ou vazio — X-Forwarded-For ficaria spoofable."
+    )
+forwarded_allow_ips = _raw_forwarded
 
 # Access lines come from RequestLoggingMiddleware (correlation_id, duration, route).
 # Leaving gunicorn's access log off avoids one duplicate line per request.

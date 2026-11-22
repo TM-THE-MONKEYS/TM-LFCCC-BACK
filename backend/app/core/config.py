@@ -15,6 +15,8 @@ _WEAK_JWT_SECRETS = frozenset(
         "dev-secret-troque-em-producao-minimo-32-chars",
         "troque-este-segredo-em-producao",
         "troque-este-segredo-por-um-valor-seguro-em-producao",
+        # Placeholder literal de backend/.env.example (≥32 chars — passava o check de tamanho).
+        "troque-este-segredo-por-um-valor-seguro-com-pelo-menos-32-chars",
         "dev-secret-local",
         "changeme",
         "secret",
@@ -48,6 +50,8 @@ class Settings(BaseSettings):
     ADMIN_EMAIL: str = "admin@vitrine.local"
     ADMIN_PASSWORD: SecretStr = SecretStr(_DEFAULT_ADMIN_PASSWORD)
     ALLOWED_HOSTS: str = "localhost,127.0.0.1"
+    # IPs/CIDRs do proxy que o Gunicorn confia para X-Forwarded-For. Nunca "*".
+    FORWARDED_ALLOW_IPS: str = "127.0.0.1"
     # Quando verdadeiro, cria as tabelas via SQLAlchemy ao iniciar (Base.metadata.create_all).
     # Útil para desenvolvimento local com SQLite, dispensando as migrations do Alembic.
     # Em produção, deixe como false e use `alembic upgrade head`.
@@ -69,6 +73,10 @@ class Settings(BaseSettings):
     @property
     def allowed_hosts_list(self) -> list[str]:
         return [host.strip() for host in self.ALLOWED_HOSTS.split(",") if host.strip()]
+
+    @property
+    def forwarded_allow_ips_list(self) -> list[str]:
+        return [ip.strip() for ip in self.FORWARDED_ALLOW_IPS.split(",") if ip.strip()]
 
     @property
     def is_production(self) -> bool:
@@ -123,6 +131,20 @@ class Settings(BaseSettings):
         origins = self.cors_origins_list
         if not origins or "*" in origins:
             errors.append("CORS_ORIGINS não pode ser '*' ou vazio em produção.")
+
+        hosts = self.allowed_hosts_list
+        if not hosts or "*" in hosts:
+            errors.append(
+                "ALLOWED_HOSTS não pode ser '*' ou vazio em produção "
+                "(TrustedHost ficaria desligado ou inútil)."
+            )
+
+        forwarded = self.forwarded_allow_ips_list
+        if not forwarded or "*" in forwarded:
+            errors.append(
+                "FORWARDED_ALLOW_IPS não pode ser '*' ou vazio em produção "
+                "(X-Forwarded-For spoofable — bypass de rate limit por IP)."
+            )
 
         if self.CREATE_TABLES_ON_STARTUP:
             errors.append(
