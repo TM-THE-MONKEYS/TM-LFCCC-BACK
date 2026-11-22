@@ -12,11 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.lock ./
 COPY app ./app
 
+# Third-party deps from hashed lock; then install this package without resolving again.
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir --require-hashes -r requirements.lock \
+    && pip install --no-cache-dir --no-deps .
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
@@ -37,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /venv /venv
 
-COPY alembic.ini ./
+COPY alembic.ini gunicorn.conf.py ./
 COPY alembic ./alembic
 COPY app ./app
 COPY pyproject.toml README.md ./
@@ -50,16 +52,12 @@ USER app
 EXPOSE 8000
 
 # gunicorn + UvicornWorker: production ASGI workers behind reverse proxy.
+# Tuning (workers, timeouts, trusted proxy IPs) lives in gunicorn.conf.py and reads
+# WEB_CONCURRENCY / FORWARDED_ALLOW_IPS from the environment.
 # Migrations are NOT run here — use compose profile `migrate` (or a release job)
 # before scaling replicas to avoid multi-instance Alembic races.
 # /ready runs SELECT 1 against the DB — fail the container if Postgres is unreachable.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/ready || exit 1
 
-CMD ["gunicorn", "app.main:app", \
-     "-k", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "2", \
-     "--forwarded-allow-ips", "*", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-"]
+CMD ["gunicorn", "app.main:app", "-c", "gunicorn.conf.py"]

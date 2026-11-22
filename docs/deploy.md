@@ -4,7 +4,7 @@
 
 - Multi-stage (`builder` → `runtime`), usuário **non-root** (`app`, uid 10001)
 - Processo: `gunicorn -k uvicorn.workers.UvicornWorker` (proxy headers / forwarded IPs)
-- `HEALTHCHECK` em `GET /health`
+- `HEALTHCHECK` em `GET /ready` (executa `SELECT 1` no banco; falha se o Postgres estiver fora)
 - Secrets **somente via env** (nunca bake no image)
 
 Build:
@@ -34,7 +34,10 @@ Compose monta o volume nomeado `uploads_data` em `/app/uploads` (persistente ent
 Variáveis:
 
 - `UPLOAD_DIR` — path no container (padrão `/app/uploads`)
-- `PUBLIC_BASE_URL` — base usada para montar `imageUrl` nas respostas
+- `PUBLIC_BASE_URL` — **opcional**. Vazio (padrão) → `imageUrl` relativo (`/uploads/products/<arquivo>`),
+  resolvido pelo navegador contra a origem que ele usou (IP ou hostname da LAN). Defina
+  (`http://…`/`https://…`) só se as imagens vierem de outra origem/CDN.
+- `MAX_IMAGE_PIXELS` — teto de resolução do upload (padrão 40 000 000 = 40 MP), checado antes de decodificar.
 
 ## Servindo `/uploads` (proxy / CDN)
 
@@ -56,8 +59,9 @@ docker compose exec api python -m app.seed
 
 ## Health
 
-`GET /health` → `{ "status": "healthy", "version": "<pyproject>", "timestamp": "..." }`  
-Também: `/ready` (DB), `/live`.
+- `GET /ready` → readiness (DB `SELECT 1`); é o probe usado pelo `HEALTHCHECK` da imagem. 503 se o banco não responde.
+- `GET /health` → `{ "status": "healthy", "version": "<pyproject>", "timestamp": "..." }` (não toca no banco)
+- `GET /live` → liveness do processo.
 
 ## Checklist rápido produção
 

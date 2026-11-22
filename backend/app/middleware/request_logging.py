@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -42,7 +41,7 @@ def _should_skip(path: str) -> bool:
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Log one structured line per request (keys only for query — never values)."""
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if _should_skip(request.url.path):
             return await call_next(request)
 

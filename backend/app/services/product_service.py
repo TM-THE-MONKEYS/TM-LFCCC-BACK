@@ -7,6 +7,8 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from app.core.config import get_settings
+from app.core.database import on_commit, on_rollback
 from app.exceptions import ConflictError, InsufficientStockError, NotFoundError, UnprocessableError
 from app.models.product import Product
 from app.repositories.product_repository import ProductRepository
@@ -148,13 +150,20 @@ class ProductService:
         return b"".join(chunks)
 
     @staticmethod
-    def _reencode_image(raw: bytes) -> tuple[bytes, str]:
+    def _reencode_image(raw: bytes, max_pixels: int) -> tuple[bytes, str]:
         try:
+            # Image.open only parses the header; size is known before any pixel decoding.
             with Image.open(io.BytesIO(raw)) as img:
                 fmt = (img.format or "").upper()
                 if fmt not in _ALLOWED_FORMATS:
                     raise UnprocessableError(
                         "Tipo de arquivo não permitido. Use: jpeg, png ou webp."
+                    )
+                width, height = img.size
+                if width * height > max_pixels:
+                    raise UnprocessableError(
+                        f"Imagem com resolução muito alta ({width}x{height}). "
+                        f"Máximo: {max_pixels // 1_000_000} megapixels."
                     )
                 # Normalize mode for JPEG (no alpha). convert() returns Image, not ImageFile.
                 working: Image.Image = img
@@ -171,6 +180,8 @@ class ProductService:
                 return buf.getvalue(), _ALLOWED_FORMATS[fmt]
         except UnprocessableError:
             raise
+        except Image.DecompressionBombError as exc:
+            raise UnprocessableError("Imagem com resolução muito alta.") from exc
         except UnidentifiedImageError as exc:
             raise UnprocessableError("Arquivo de imagem inválido. Use: jpeg, png ou webp.") from exc
         except OSError as exc:
@@ -182,7 +193,9 @@ class ProductService:
         if not raw:
             raise UnprocessableError("Arquivo vazio.")
 
-        encoded, ext = await run_in_threadpool(self._reencode_image, raw)
+        encoded, ext = await run_in_threadpool(
+            self._reencode_image, raw, get_settings().MAX_IMAGE_PIXELS
+        )
         filename = f"{uuid.uuid4()}.{ext}"
         relative = f"products/{filename}"
 
@@ -192,7 +205,11 @@ class ProductService:
         product.image_url = stored_path
         self._repo.update(product)
 
+        # The request UoW commits later: keep the old file until the new path is durable,
+        # and drop the new file if the transaction never commits.
+        storage = self._storage
         if old_image and old_image != stored_path:
-            await run_in_threadpool(self._storage.delete, old_image)
+            on_commit(self._db, lambda: storage.delete(old_image))
+        on_rollback(self._db, lambda: storage.delete(stored_path))
 
         return product

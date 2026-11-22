@@ -27,7 +27,7 @@ os.environ.setdefault("ENVIRONMENT", "test")
 from app.api.deps import get_db  # noqa: E402
 from app.core.database import Base  # noqa: E402
 from app.core.enums import UserRole  # noqa: E402
-from app.core.rate_limit import login_rate_limiter  # noqa: E402
+from app.core.rate_limit import login_rate_limiter, password_change_rate_limiter  # noqa: E402
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.user import User  # noqa: E402
@@ -54,8 +54,10 @@ IS_POSTGRES = TEST_DATABASE_URL.startswith("postgresql")
 @pytest.fixture(autouse=True)
 def _reset_login_rate_limiter():
     login_rate_limiter.reset()
+    password_change_rate_limiter.reset()
     yield
     login_rate_limiter.reset()
+    password_change_rate_limiter.reset()
 
 
 @pytest.fixture
@@ -84,8 +86,17 @@ def db(engine):
 
 
 @pytest.fixture
-def client(db: Session):
-    """FastAPI TestClient with get_db overridden — mirrors production UoW."""
+def client(db: Session, engine, monkeypatch):
+    """FastAPI TestClient with get_db overridden — mirrors production UoW.
+
+    Also patches the module-level engine so /ready (which connects via
+    app.core.database.engine, not get_db) hits the same test DB.
+    Lifespan shutdown calls engine.dispose(); noop that during the client
+    so StaticPool SQLite stays usable for db/engine fixture teardown.
+    """
+    monkeypatch.setattr("app.core.database.engine", engine)
+    real_dispose = engine.dispose
+    engine.dispose = lambda: None  # type: ignore[method-assign]
 
     def override_get_db():
         try:
@@ -96,9 +107,12 @@ def client(db: Session):
             raise
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app, raise_server_exceptions=True) as c:
-        yield c
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app, raise_server_exceptions=True) as c:
+            yield c
+    finally:
+        engine.dispose = real_dispose  # type: ignore[method-assign]
+        app.dependency_overrides.clear()
 
 
 def _insert_user(
@@ -220,3 +234,35 @@ def created_product(client, admin_headers):
     r = client.post("/api/v1/products", json=PRODUCT_PAYLOAD, headers=admin_headers)
     assert r.status_code == 201, r.text
     return r.json()["data"]
+
+
+# Valid 1×1 PNG that Pillow can load and re-encode
+MIN_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf"
+    b"\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+@pytest.fixture
+def tmp_storage(tmp_path, monkeypatch):
+    """Route ProductService uploads to a temp dir instead of backend/uploads."""
+    from app.services.product_service import ProductService
+    from app.storage.local import LocalStorage
+
+    storage = LocalStorage(base_dir=tmp_path)
+    original_init = ProductService.__init__
+
+    def _init(self, db, storage_arg=None):
+        original_init(self, db, storage=storage)
+
+    monkeypatch.setattr(ProductService, "__init__", _init)
+    return storage
+
+
+def upload_image(client, product_id: str, payload: bytes, headers: dict[str, str]):
+    return client.post(
+        f"/api/v1/products/{product_id}/image",
+        files={"file": ("img.png", payload, "image/png")},
+        headers=headers,
+    )

@@ -1,25 +1,51 @@
-# Secrets (JWT_SECRET, ADMIN_PASSWORD, DB password) come from env / .env only.
-# Never bake credentials into the image.
+# DEV / local — build a partir de ./Dockerfile.
+# Produção on-prem (imagens GHCR + front + backup): use ../deploy/ (ver deploy/README.md).
+# Não misture este arquivo com deploy/docker-compose.yml no mesmo host sem cuidado.
+#
+# Secrets (JWT_SECRET, ADMIN_PASSWORD, POSTGRES_PASSWORD) come from env / .env only.
+# Never bake credentials into the image. Variáveis obrigatórias falham o `docker compose`
+# com mensagem explícita se ausentes — veja .env.example.
 #
 # Migrations: run once via profile `migrate` BEFORE scaling `api` replicas.
 #   docker compose --profile migrate run --rm migrate
 #   docker compose up -d api
 #
 # Do not put `alembic upgrade` in the api CMD when running multiple replicas.
+#
+# A API NÃO publica porta no host: o proxy (nginx do front) alcança `api:8000` pela
+# rede `vitrine`. Para acessar direto em dev, copie docker-compose.override.example.yml
+# para docker-compose.override.yml.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app-env: &app-env
+  ENVIRONMENT: ${ENVIRONMENT:?Defina ENVIRONMENT no .env (production em prod)}
+  # Senha entra na URL: use apenas caracteres URL-safe (letras, dígitos, - _ . ~).
+  DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-vitrine}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@db:5432/${POSTGRES_DB:-vitrine}
+  JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
 
 services:
   db:
-    image: postgres:16
+    image: postgres:16.16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vitrine}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vitrine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
       POSTGRES_DB: ${POSTGRES_DB:-vitrine}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     # Porta 5432 NÃO publicada no host — acesso só via rede interna do compose.
     expose:
       - "5432"
+    networks:
+      - vitrine
+    logging: *default-logging
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vitrine} -d ${POSTGRES_DB:-vitrine}"]
       interval: 10s
@@ -31,38 +57,53 @@ services:
     profiles: ["migrate"]
     build: .
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://vitrine:vitrine@db:5432/vitrine}
-      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
+      <<: *app-env
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - vitrine
+    logging: *default-logging
     command: ["alembic", "upgrade", "head"]
     restart: "no"
 
   api:
     build: .
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://vitrine:vitrine@db:5432/vitrine}
-      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env}
+      <<: *app-env
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:8080}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       UPLOAD_DIR: /app/uploads
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      # Vazio = imageUrl relativo (/uploads/...), servido pela mesma origem do front.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-40000000}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@vitrine.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      # Em prod: IP/sub-rede do proxy (ex.: VITRINE_SUBNET). Nunca "*".
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     volumes:
       # Persistent product images across container recreates
       - uploads_data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - vitrine
+    logging: *default-logging
+    # gunicorn graceful_timeout=30s; dá margem antes do SIGKILL.
+    stop_grace_period: 40s
+
+networks:
+  # Sub-rede fixa para que FORWARDED_ALLOW_IPS possa confiar só no proxy interno.
+  vitrine:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${VITRINE_SUBNET:-172.28.0.0/16}
 
 volumes:
   postgres_data:

@@ -18,6 +18,12 @@
  * - GET /reports agora em StandardResponse<ReportResponse>
  * - Path IDs devem ser UUID (inválido → 422; inexistente → 404)
  *
+ * Prod readiness (2026-11-21):
+ * - imageUrl pode ser relativo ("/uploads/...") — PUBLIC_BASE_URL agora é opcional (default vazio).
+ *   Mesmo tipo (string | null), mas quem assumia URL absoluta precisa resolver contra a origem.
+ * - POST /sales/{id}/cancel: cancelamento concorrente → só um 200, demais 409.
+ * - Novos (aditivos): PATCH /users/{id}, POST /users/{id}/password, POST /users/me/password.
+ *
  * BREAKING (Fases anteriores): alias /api removido; register público removido; sem refresh.
  * Dinheiro: number no JSON, 2 casas.
  *
@@ -178,6 +184,34 @@ export interface UserCreate {
   role?: UserRole; // default: operator
 }
 
+/** PATCH /users/{id} — admin; omitidos/null não mudam */
+export interface UserPatchInput {
+  name?: string;
+  role?: UserRole;
+  isActive?: boolean;
+}
+
+/** POST /users/{id}/password — admin redefine senha de OUTRO usuário */
+export interface PasswordResetInput {
+  newPassword: string; // 8+ chars, ≤ 72 bytes
+}
+
+/** POST /users/me/password — usuário autenticado troca a própria senha */
+export interface PasswordChangeInput {
+  currentPassword: string;
+  newPassword: string; // 8+ chars, ≤ 72 bytes, diferente da atual
+}
+
+// Authz:
+//   GET    /users                    → admin (+ meta)
+//   POST   /users                    → admin → 201
+//   PATCH  /users/{id}               → admin → StandardResponse<UserResponse>;
+//                                      409 = desativar/rebaixar a si mesmo ou o último admin ativo
+//   POST   /users/{id}/password      → admin → StandardResponse<UserResponse>; 409 se id = o próprio
+//   POST   /users/me/password        → autenticado → StandardResponse<UserResponse>;
+//                                      422 senha atual errada/igual; 429 após 5 tentativas/min
+// Usuário desativado: login recusado e tokens existentes → 401.
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Produtos — /api/v1/products
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +246,12 @@ export interface ProductPatchInput {
   isActive?: boolean;
 }
 
-/** GET público — sem costPrice */
+/**
+ * GET público — sem costPrice.
+ * imageUrl: caminho relativo à origem ("/uploads/products/<arquivo>") quando o backend roda
+ * sem PUBLIC_BASE_URL (padrão em produção, mesma origem do front); URL absoluta quando
+ * PUBLIC_BASE_URL está definido ou quando o produto foi cadastrado com URL externa.
+ */
 export interface ProductPublicResponse {
   id: string;
   sku: string;

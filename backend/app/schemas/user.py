@@ -52,6 +52,37 @@ class UserCreate(CamelModel):
         return _validate_password(v)
 
 
+class UserPatchInput(CamelModel):
+    """PATCH /users/{id} (admin). Omitted or null fields are left unchanged."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class PasswordResetInput(CamelModel):
+    """POST /users/{id}/password (admin sets a new password for another user)."""
+
+    new_password: str = Field(min_length=8, max_length=200)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_constraints(cls, v: str) -> str:
+        return _validate_password(v)
+
+
+class PasswordChangeInput(CamelModel):
+    """POST /users/me/password (user changes own password)."""
+
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_constraints(cls, v: str) -> str:
+        return _validate_password(v)
+
+
 class UserResponse(CamelModel):
     id: str
     name: str

@@ -13,14 +13,13 @@ _ALLOWED_SIZES = {s.value for s in ClothingSize}
 
 
 def build_public_image_url(stored: str | None) -> str | None:
-    """Turn a relative storage path into an absolute public URL."""
+    """Storage path → public URL: absolute with PUBLIC_BASE_URL, else root-relative path."""
     if not stored:
         return None
     if stored.startswith("http://") or stored.startswith("https://"):
         return stored
-    base = get_settings().PUBLIC_BASE_URL.rstrip("/")
     path = stored if stored.startswith("/") else f"/{stored}"
-    return f"{base}{path}"
+    return f"{get_settings().PUBLIC_BASE_URL}{path}"
 
 
 class ProductInput(CamelModel):

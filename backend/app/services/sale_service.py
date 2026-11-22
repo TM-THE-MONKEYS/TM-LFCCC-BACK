@@ -131,11 +131,11 @@ class SaleService:
     def cancel(self, sale_id: str) -> Sale:
         """Cancel/refund a sale and restore stock (admin)."""
         sale = self.get_by_id(sale_id)
-        if sale.cancelled_at is not None:
+        # Conditional UPDATE is the only guard: two concurrent cancels both read
+        # cancelled_at=NULL, but only one matches the WHERE and restores stock.
+        if not self._sale_repo.mark_cancelled_atomic(sale.id, datetime.now(UTC)):
             raise ConflictError("Venda já cancelada.")
-
-        sale.cancelled_at = datetime.now(UTC)
-        self._sale_repo.update(sale)
+        self._db.refresh(sale)
 
         if sale.product_id and sale.quantity > 0:
             self._product_repo.increment_stock_atomic(sale.product_id, sale.quantity)

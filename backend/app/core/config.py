@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Localiza o .env relativo a este arquivo (backend/.env) para que as configurações
@@ -15,6 +15,8 @@ _WEAK_JWT_SECRETS = frozenset(
         "dev-secret-troque-em-producao-minimo-32-chars",
         "troque-este-segredo-em-producao",
         "troque-este-segredo-por-um-valor-seguro-em-producao",
+        # Placeholder literal de backend/.env.example (≥32 chars — passava o check de tamanho).
+        "troque-este-segredo-por-um-valor-seguro-com-pelo-menos-32-chars",
         "dev-secret-local",
         "changeme",
         "secret",
@@ -22,6 +24,8 @@ _WEAK_JWT_SECRETS = frozenset(
     }
 )
 _DEFAULT_ADMIN_PASSWORD = "changeme"
+# Sem refresh token, o access token é a sessão inteira: limite de 24h em produção.
+_MAX_PROD_JWT_EXPIRE_MINUTES = 24 * 60
 
 
 class Settings(BaseSettings):
@@ -34,18 +38,28 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["local", "test", "production"] = "local"
     DATABASE_URL: str = "postgresql+psycopg2://vitrine:vitrine@localhost:5432/vitrine"
     JWT_SECRET: SecretStr = SecretStr("dev-secret-troque-em-producao-minimo-32-chars")
-    JWT_EXPIRE_MINUTES: int = 60
+    JWT_EXPIRE_MINUTES: int = Field(default=60, ge=1)
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
     APP_TIMEZONE: str = "America/Sao_Paulo"
     UPLOAD_DIR: str = "uploads"
-    PUBLIC_BASE_URL: str = "http://localhost:8000"
+    # Vazio → imageUrl relativo (/uploads/...), resolvido pela origem que o navegador usou
+    # (IP ou hostname na LAN). Defina só se as imagens vierem de outra origem/CDN.
+    PUBLIC_BASE_URL: str = ""
+    # Teto de resolução do upload (largura × altura), checado antes de decodificar.
+    MAX_IMAGE_PIXELS: int = Field(default=40_000_000, ge=1)
     ADMIN_EMAIL: str = "admin@vitrine.local"
     ADMIN_PASSWORD: SecretStr = SecretStr(_DEFAULT_ADMIN_PASSWORD)
     ALLOWED_HOSTS: str = "localhost,127.0.0.1"
+    # IPs/CIDRs do proxy que o Gunicorn confia para X-Forwarded-For. Nunca "*".
+    FORWARDED_ALLOW_IPS: str = "127.0.0.1"
     # Quando verdadeiro, cria as tabelas via SQLAlchemy ao iniciar (Base.metadata.create_all).
     # Útil para desenvolvimento local com SQLite, dispensando as migrations do Alembic.
     # Em produção, deixe como false e use `alembic upgrade head`.
     CREATE_TABLES_ON_STARTUP: bool = False
+
+    # Sentry opcional: vazio = desligado. Só erros 5xx/não tratados viram evento.
+    SENTRY_DSN: SecretStr = SecretStr("")
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=0.0, ge=0.0, le=1.0)
 
     # Pool SQLAlchemy (ignorado para SQLite)
     DB_POOL_SIZE: int = 10
@@ -59,6 +73,10 @@ class Settings(BaseSettings):
     @property
     def allowed_hosts_list(self) -> list[str]:
         return [host.strip() for host in self.ALLOWED_HOSTS.split(",") if host.strip()]
+
+    @property
+    def forwarded_allow_ips_list(self) -> list[str]:
+        return [ip.strip() for ip in self.FORWARDED_ALLOW_IPS.split(",") if ip.strip()]
 
     @property
     def is_production(self) -> bool:
@@ -79,6 +97,16 @@ class Settings(BaseSettings):
             return v.strip().lower()
         return v
 
+    @field_validator("PUBLIC_BASE_URL", mode="after")
+    @classmethod
+    def normalize_public_base_url(cls, v: str) -> str:
+        value = v.strip().rstrip("/")
+        if value and not value.startswith(("http://", "https://")):
+            raise ValueError(
+                "PUBLIC_BASE_URL deve começar com http:// ou https:// (ou ficar vazio)."
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_production_safety(self) -> "Settings":
         if self.ENVIRONMENT != "production":
@@ -91,12 +119,32 @@ class Settings(BaseSettings):
         if secret in _WEAK_JWT_SECRETS or secret.lower().startswith("dev-secret"):
             errors.append("JWT_SECRET é um valor conhecido/fraco — defina um segredo forte.")
 
+        if self.JWT_EXPIRE_MINUTES > _MAX_PROD_JWT_EXPIRE_MINUTES:
+            errors.append(
+                f"JWT_EXPIRE_MINUTES não pode passar de {_MAX_PROD_JWT_EXPIRE_MINUTES} em "
+                "produção (recomendado: 720)."
+            )
+
         if self.ADMIN_PASSWORD.get_secret_value() == _DEFAULT_ADMIN_PASSWORD:
             errors.append("ADMIN_PASSWORD não pode ser o valor padrão 'changeme' em produção.")
 
         origins = self.cors_origins_list
         if not origins or "*" in origins:
             errors.append("CORS_ORIGINS não pode ser '*' ou vazio em produção.")
+
+        hosts = self.allowed_hosts_list
+        if not hosts or "*" in hosts:
+            errors.append(
+                "ALLOWED_HOSTS não pode ser '*' ou vazio em produção "
+                "(TrustedHost ficaria desligado ou inútil)."
+            )
+
+        forwarded = self.forwarded_allow_ips_list
+        if not forwarded or "*" in forwarded:
+            errors.append(
+                "FORWARDED_ALLOW_IPS não pode ser '*' ou vazio em produção "
+                "(X-Forwarded-For spoofable — bypass de rate limit por IP)."
+            )
 
         if self.CREATE_TABLES_ON_STARTUP:
             errors.append(

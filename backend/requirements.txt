@@ -1,7 +1,11 @@
 # Install from pyproject.toml (source of truth):
 #   pip install -e ".[dev]"
 #
-# Production runtime dependencies are listed under [project].dependencies.
+# Production runtime: use the hashed lock (Docker does this):
+#   pip install --require-hashes -r requirements.lock && pip install --no-deps .
+# Regenerate the lock after changing [project].dependencies:
+#   pip-compile --generate-hashes --allow-unsafe --output-file=requirements.lock pyproject.toml
+#
 # This file is kept as a thin pointer for environments that still expect requirements.txt.
 
 -e .[dev]

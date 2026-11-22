@@ -1,0 +1,167 @@
+# Produção on-prem (VM Ubuntu / LAN) — só imagens GHCR, sem build local.
+#
+# Uso (a partir desta pasta):
+#   cp .env.prod.example .env   # edite segredos + ALLOWED_HOSTS/CORS
+#   ./scripts/up.sh
+#
+# Build local a partir de clones irmãos: ver docker-compose.build.yml
+# e a seção "Fallback: build local" em README.md.
+#
+# Sem TLS/Caddy/cloudflared por decisão do produto (HTTP na LAN).
+
+name: lfccc
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app-env: &app-env
+  ENVIRONMENT: production
+  DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-vitrine}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@db:5432/${POSTGRES_DB:-vitrine}
+  JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
+  JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-720}
+  CORS_ORIGINS: ${CORS_ORIGINS:?Defina CORS_ORIGINS no .env (ex.: http://192.168.0.50)}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Defina ALLOWED_HOSTS no .env (IP/hostname LAN + 127.0.0.1)}
+  UPLOAD_DIR: /app/uploads
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+  MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-40000000}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@vitrine.local}
+  WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.28.0.0/16}
+  CREATE_TABLES_ON_STARTUP: "false"
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+
+services:
+  db:
+    image: postgres:16.16-alpine
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vitrine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-vitrine}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Sem ports no host — só rede interna.
+    expose:
+      - "5432"
+    networks:
+      - vitrine
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # One-shot: sobe com `up`, termina, e a API espera sucesso.
+  migrate:
+    image: ghcr.io/tm-the-monkeys/tm-lfccc-back:${APP_TAG:-latest}
+    restart: "no"
+    environment:
+      <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vitrine
+    logging: *default-logging
+    command: ["alembic", "upgrade", "head"]
+
+  api:
+    image: ghcr.io/tm-the-monkeys/tm-lfccc-back:${APP_TAG:-latest}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    expose:
+      - "8000"
+    environment:
+      <<: *app-env
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - vitrine
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  front:
+    image: ghcr.io/tm-the-monkeys/tm-lfccc-front:${APP_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${FRONT_HOST_PORT:-80}:8080"
+    environment:
+      API_UPSTREAM: api:8000
+      NGINX_RESOLVER: 127.0.0.11
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - vitrine
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Backup agendado local (volume db_backups). Offsite = backlog (Julio decide depois).
+  db-backup:
+    image: postgres:16.16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vitrine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-vitrine}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - db_backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vitrine
+    logging: *default-logging
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "db-backup: interval=$${BACKUP_INTERVAL_SECONDS}s keep=$${BACKUP_KEEP_DAYS}d"
+        while true; do
+          ts=$$(date -u +%Y%m%dT%H%M%SZ)
+          file="/backups/vitrine_$${ts}.sql.gz"
+          echo "db-backup: dumping $${file}"
+          pg_dump -h db -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" --no-owner --no-acl \
+            | gzip -c > "$${file}.tmp"
+          mv "$${file}.tmp" "$${file}"
+          find /backups -type f -name 'vitrine_*.sql.gz' -mtime +$${BACKUP_KEEP_DAYS} -delete 2>/dev/null || true
+          sleep "$${BACKUP_INTERVAL_SECONDS}"
+        done
+
+networks:
+  vitrine:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${VITRINE_SUBNET:-172.28.0.0/16}
+
+volumes:
+  postgres_data:
+  uploads_data:
+  db_backups:

@@ -281,6 +281,68 @@ def test_list_sales_most_recent_first(client, created_product, admin_headers):
     assert sales[0]["createdAt"] >= sales[1]["createdAt"]
 
 
+# --- Cancel ------------------------------------------------------------------
+
+
+def test_cancel_twice_restores_stock_only_once(client, created_product, admin_headers):
+    sale = client.post(
+        BASE, json=_sale_payload(created_product, quantity=2), headers=admin_headers
+    ).json()["data"]
+
+    first = client.post(f"{BASE}/{sale['id']}/cancel", headers=admin_headers)
+    second = client.post(f"{BASE}/{sale['id']}/cancel", headers=admin_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    body = second.json()
+    assert body["status"] == 409
+    assert "cancelada" in body["message"].lower()
+    assert "timestamp" in body
+    product = client.get(f"/api/v1/products/{created_product['id']}").json()["data"]
+    assert product["quantity"] == created_product["quantity"]
+
+
+def test_cancel_with_stale_read_does_not_restore_stock_twice(
+    engine, client, created_product, admin_headers
+):
+    """Two sessions read the sale before either cancels: only one may restore stock."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+
+    from app.exceptions import ConflictError
+    from app.models.sale import Sale
+    from app.services.sale_service import SaleService
+
+    sale_id = client.post(
+        BASE, json=_sale_payload(created_product, quantity=3), headers=admin_headers
+    ).json()["data"]["id"]
+    stock_after_sale = created_product["quantity"] - 3
+
+    SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    first, second = SessionLocal(), SessionLocal()
+    try:
+        assert second.get(Sale, sale_id).cancelled_at is None  # stale snapshot
+
+        SaleService(first).cancel(sale_id)
+        first.commit()
+
+        with pytest.raises(ConflictError):
+            SaleService(second).cancel(sale_id)
+        second.rollback()
+    finally:
+        first.close()
+        second.close()
+
+    verify = SessionLocal()
+    try:
+        quantity = verify.scalar(
+            select(Product.quantity).where(Product.id == created_product["id"])
+        )
+        assert quantity == stock_after_sale + 3
+    finally:
+        verify.close()
+
+
 # --- Concurrency (Postgres only) ---------------------------------------------
 
 

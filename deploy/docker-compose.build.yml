@@ -1,0 +1,36 @@
+# Override opcional: build local em vez de puxar do GHCR.
+#
+# Pré-requisito: clones irmãos no mesmo nível, por exemplo:
+#   /opt/lfccc/TM-LFCCC-BACK   (este repo)
+#   /opt/lfccc/LFCCC-FRONT     (front — nome da pasta = LFCCC-FRONT)
+#
+# Uso:
+#   USE_LOCAL_BUILD=1 ./scripts/up.sh
+#   # ou:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Paths relativos a deploy/ → ../../LFCCC-FRONT e ../backend
+
+services:
+  migrate:
+    image: lfccc-back:local
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    pull_policy: never
+
+  api:
+    image: lfccc-back:local
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    pull_policy: never
+
+  front:
+    image: lfccc-front:local
+    build:
+      context: ../../LFCCC-FRONT
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    pull_policy: never
