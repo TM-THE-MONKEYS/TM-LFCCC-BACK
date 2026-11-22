@@ -86,8 +86,17 @@ def db(engine):
 
 
 @pytest.fixture
-def client(db: Session):
-    """FastAPI TestClient with get_db overridden — mirrors production UoW."""
+def client(db: Session, engine, monkeypatch):
+    """FastAPI TestClient with get_db overridden — mirrors production UoW.
+
+    Also patches the module-level engine so /ready (which connects via
+    app.core.database.engine, not get_db) hits the same test DB.
+    Lifespan shutdown calls engine.dispose(); noop that during the client
+    so StaticPool SQLite stays usable for db/engine fixture teardown.
+    """
+    monkeypatch.setattr("app.core.database.engine", engine)
+    real_dispose = engine.dispose
+    engine.dispose = lambda: None  # type: ignore[method-assign]
 
     def override_get_db():
         try:
@@ -98,9 +107,12 @@ def client(db: Session):
             raise
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app, raise_server_exceptions=True) as c:
-        yield c
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app, raise_server_exceptions=True) as c:
+            yield c
+    finally:
+        engine.dispose = real_dispose  # type: ignore[method-assign]
+        app.dependency_overrides.clear()
 
 
 def _insert_user(
